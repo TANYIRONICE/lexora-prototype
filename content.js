@@ -4,7 +4,7 @@ window.LEXORA_CONTENT = {
     {
       id: "kids", title: "Kids' English", emoji: "🧸", color: "#1F9D6B", audience: "child",
       desc: "Letters, sounds, words and stories for ages 5–12.",
-      units: [{ title: "Unit 1 · Letters & first words", lessons: ["k1", "k2"] },
+      units: [{ title: "Unit 1 · Letters & first words", lessons: ["k1", "k2", "k3"] },
               { title: "Unit 2 · My family", lessons: [], soon: true }]
     },
     {
@@ -18,12 +18,28 @@ window.LEXORA_CONTENT = {
       desc: "Spelling rules, word building, dictation and tests.",
       units: [{ title: "Word list 1 · Tricky words", lessons: ["s1", "s2"] },
               { title: "Word list 2 · Silent letters", lessons: [], soon: true }]
+    },
+    {
+      id: "maths", title: "Maths", emoji: "🔢", color: "#7C3AED", audience: "all",
+      desc: "Counting, numbers and everyday maths.",
+      units: [
+        { title: "Numbers to 10", audience: "child", lessons: ["m1", "m2"] },
+        { title: "Everyday maths · Fractions & percentages", audience: "learner", lessons: ["m3"] },
+        { title: "Shapes & measuring", soon: true }
+      ]
     }
   ],
   lessons: {
     k1: {
       title: "Letters A, B, C", emoji: "🔤", skill: "Phonics", words: ["apple", "ball", "cat"],
       activities: [
+        { type: "video", title: "Meet A, B and C", scenes: [
+          { bg: "#DBEAFE", art: "👋", anim: "float", caption: "Hello! Let's meet A, B and C." },
+          { bg: "#FDE68A", art: "🍎", anim: "pop", caption: "A is for apple." },
+          { bg: "#BFDBFE", art: "⚽", anim: "bounce", caption: "B is for ball." },
+          { bg: "#FECACA", art: "🐱", anim: "slide", caption: "C is for cat." },
+          { bg: "#D1FAE5", art: "🎉", anim: "float", caption: "Let's play with letters!" }
+        ] },
         { type: "card", big: "Aa", emoji: "🍎", text: "A is for apple", say: "A. A is for apple." },
         { type: "card", big: "Bb", emoji: "⚽", text: "B is for ball", say: "B. B is for ball." },
         { type: "card", big: "Cc", emoji: "🐱", text: "C is for cat", say: "C. C is for cat." },
@@ -54,6 +70,23 @@ window.LEXORA_CONTENT = {
         { type: "choice", prompt: "Who is Sam?", say: "Who is Sam?",
           options: [{ e: "🐦", t: "a bird" }, { e: "🐶", t: "a dog" }, { e: "🐟", t: "a fish" }], answer: 1, pictures: true },
         { type: "build", prompt: "Build the word.", say: "Build the word. dog.", word: "dog", emoji: "🐶" }
+      ]
+    },
+    k3: {
+      title: "Colours (video lesson)", emoji: "🎬", skill: "Vocabulary", words: ["red", "yellow", "blue", "green"],
+      activities: [
+        { type: "video", title: "Colours", scenes: [
+          { bg: "#FEE2E2", art: "🍎", anim: "pop", caption: "This apple is red." },
+          { bg: "#FEF3C7", art: "☀️", anim: "float", caption: "The sun is yellow." },
+          { bg: "#DBEAFE", art: "🐳", anim: "slide", caption: "The sea is blue. A whale swims in the sea." },
+          { bg: "#D1FAE5", art: "🐸", anim: "bounce", caption: "The frog is green." },
+          { bg: "#EDE9FE", art: "🌈", anim: "float", caption: "Look at the rainbow!" },
+          { bg: "#DCFCE7", art: "🐸", anim: "pop", caption: "What colour is the frog? Green!" }
+        ] },
+        { type: "choice", prompt: "Which one is yellow?", options: [{ e: "🟥", t: "red" }, { e: "🟨", t: "yellow" }, { e: "🟦", t: "blue" }, { e: "🟩", t: "green" }], answer: 1, pictures: true },
+        { type: "choice", prompt: "Listen. Which colour did you hear?", say: "blue", listen: true, options: [{ e: "🟥", t: "red" }, { e: "🟨", t: "yellow" }, { e: "🟦", t: "blue" }, { e: "🟩", t: "green" }], answer: 2, pictures: true },
+        { type: "match", prompt: "Match the colour word to the picture.", pairs: [["red", "🟥"], ["yellow", "🟨"], ["blue", "🟦"], ["green", "🟩"]] },
+        { type: "build", prompt: "Build the word.", say: "red", word: "red", emoji: "🟥" }
       ]
     },
     a1: {
@@ -103,6 +136,44 @@ window.LEXORA_CONTENT = {
         { type: "dictation", prompt: "Spell the word you hear.", say: "Wednesday. School starts on Wednesday. Wednesday.", answer: "Wednesday", word: true },
         { type: "dictation", prompt: "Spell the word you hear.", say: "necessary. Water is necessary for life. necessary.", answer: "necessary", word: true },
         { type: "dictation", prompt: "Spell the word you hear.", say: "because. I am late because of the rain. because.", answer: "because", word: true }
+      ]
+    },
+    m1: {
+      title: "Counting 1 to 10", emoji: "🔢", skill: "Numbers", words: ["one", "two", "three", "four", "five"],
+      activities: [
+        { type: "card", big: "3", emoji: "🍎🍎🍎", text: "three apples", say: "Three. Three apples." },
+        { type: "choice", prompt: "How many stars?", bigEmoji: "⭐⭐⭐⭐", options: [{ t: "3" }, { t: "4" }, { t: "5" }], answer: 1 },
+        { type: "choice", prompt: "Listen. Which number did you hear?", say: "seven", listen: true, options: [{ t: "6" }, { t: "7" }, { t: "9" }], answer: 1 },
+        { type: "match", prompt: "Match the number to the word.", pairs: [["1", "one"], ["2", "two"], ["3", "three"], ["4", "four"]] },
+        { type: "number", prompt: "Count the balls.", visual: "⚽⚽⚽⚽⚽", answer: 5 },
+        { type: "build", prompt: "Build the word.", say: "five", word: "five", emoji: "5️⃣" }
+      ]
+    },
+    m2: {
+      title: "Adding up to 10", emoji: "➕", skill: "Numbers", words: ["plus", "equals"],
+      activities: [
+        { type: "video", title: "Adding apples", scenes: [
+          { bg: "#FDE68A", art: "🍎🍎 ➕ 🍎", anim: "pop", caption: "Two apples plus one apple equals three apples." },
+          { bg: "#DCFCE7", art: "🍐🍐 ➕ 🍐🍐", anim: "bounce", caption: "Two pears plus two pears equals four pears." },
+          { bg: "#DBEAFE", art: "🍊🍊🍊 ➕ 🍊", anim: "float", caption: "Three oranges plus one orange equals four oranges." }
+        ] },
+        { type: "choice", prompt: "How many apples? 🍎🍎 + 🍎🍎 = ?", options: [{ t: "3" }, { t: "4" }, { t: "5" }], answer: 1 },
+        { type: "number", prompt: "3 + 4 = ?", answer: 7 },
+        { type: "number", prompt: "How many fish altogether?", visual: "🐟🐟🐟🐟🐟 + 🐟🐟🐟", answer: 8 },
+        { type: "truefalse", prompt: "5 + 5 = 10", answer: true },
+        { type: "choice", prompt: "Listen. Which answer did you hear?", say: "six plus two", listen: true, options: [{ t: "7" }, { t: "8" }, { t: "9" }], answer: 1 }
+      ]
+    },
+    m3: {
+      title: "Fractions & percentages", emoji: "➗", skill: "Fractions", words: ["half", "quarter", "percent"],
+      activities: [
+        { type: "card", title: "Fractions and percentages", lines: ["½ = one <b>half</b> = 50%", "¼ = one <b>quarter</b> = 25%", "¾ = three quarters = 75%"], say: "One half is fifty percent. One quarter is twenty-five percent. Three quarters is seventy-five percent." },
+        { type: "choice", prompt: "What is ¼ of 20?", options: [{ t: "4" }, { t: "5" }, { t: "10" }], answer: 1 },
+        { type: "number", prompt: "25% of 80 = ?", answer: 20 },
+        { type: "truefalse", prompt: "0.5 is the same as 50%.", answer: true },
+        { type: "choice", prompt: "A shirt costs 10,000 XAF. It is 20% off. What is the new price?", options: [{ t: "8,000 XAF" }, { t: "9,800 XAF" }, { t: "2,000 XAF" }], answer: 0 },
+        { type: "number", prompt: "Half of 150 = ?", answer: 75 },
+        { type: "dictation", prompt: "Listen and type what you hear.", say: "three quarters", answer: "three quarters" }
       ]
     }
   },
