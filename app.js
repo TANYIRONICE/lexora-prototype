@@ -33,6 +33,10 @@
     if (!text) text = key;
     return text.replace(/\{(\w+)\}/g, (_, name) => vars[name] == null ? "" : vars[name]);
   }
+  function tEn(key, vars = {}) {
+    const text = window.LEXORA_I18N.strings[key]?.en || key;
+    return text.replace(/\{(\w+)\}/g, (_, name) => vars[name] == null ? "" : vars[name]);
+  }
   const tc = (english) => curLang() === "en" ? "" : ((window.LEXORA_I18N.tr[english] || {})[curLang()] || "");
   const gl = (word) => curLang() === "en" ? "" : ((window.LEXORA_I18N.gloss[word.toLowerCase()] || {})[curLang()] || "");
   function prog(pid) {
@@ -67,7 +71,7 @@
 
   // ---------- audio (text-to-speech stands in for recorded audio) ----------
   let voice = null;
-  const hasTTS = "speechSynthesis" in window;
+  const hasTTS = "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
   function pickVoice() {
     const vs = speechSynthesis.getVoices();
     voice = vs.find((v) => /en[-_]GB/i.test(v.lang)) || vs.find((v) => /^en/i.test(v.lang)) || null;
@@ -87,15 +91,28 @@
       u.lang = voice ? voice.lang : "en-GB";
     }
     u.rate = opts.rate || 0.9;
+    if (opts.onstart) u.onstart = opts.onstart;
     if (opts.onboundary) u.onboundary = opts.onboundary;
     if (opts.onend) u.onend = opts.onend;
     speechSynthesis.speak(u);
   }
-  let videoTimer = null;
+  const videoTimers = new Set();
+  const setVideoTimer = (callback, delay) => {
+    let timer;
+    timer = setTimeout(() => { videoTimers.delete(timer); callback(); }, delay);
+    videoTimers.add(timer);
+    return timer;
+  };
+  const clearVideoTimer = (timer) => {
+    if (timer == null) return;
+    clearTimeout(timer); videoTimers.delete(timer);
+  };
+  const clearVideoTimers = () => {
+    videoTimers.forEach(clearTimeout); videoTimers.clear();
+  };
   let videoCleanup = null;
   const stopAudio = () => {
-    if (videoTimer) clearTimeout(videoTimer);
-    videoTimer = null;
+    clearVideoTimers();
     if (videoCleanup) videoCleanup();
     videoCleanup = null;
     if (hasTTS) speechSynthesis.cancel();
@@ -289,15 +306,17 @@
   function home() {
     const p = active(), pr = prog(p.id), nxt = nextLesson(p, pr);
     const kid = p.type === "child";
+    const nxtTitle = nxt ? C.lessons[nxt].title : "";
+    const nxtTranslation = nxt ? tc(nxtTitle) : "";
     render(`${topbar()}<div class="screen">
       <h2>${kid ? esc(t("homeHi", { name: p.name })) : `${t("hello")} ${esc(p.name)}`}</h2>
       <p class="muted" style="margin-top:-6px">${kid ? "👋" : t("level", { level: esc(p.level || "Beginner A1") })}</p>
-      ${nxt ? `<button class="lesson-row" data-go="#/lesson/${nxt}" style="border:2px solid var(--accent)"><span class="em">${C.lessons[nxt].emoji}</span><span style="flex:1"><span class="small muted">${t("continueLesson")}</span><br><span class="t">${esc(C.lessons[nxt].title)}</span></span><span style="font-size:1.6rem">▶️</span></button>` : `<div class="card">🎉 ${t("lessonFinished")}</div>`}
+      ${nxt ? `<button class="lesson-row" data-go="#/lesson/${nxt}" style="border:2px solid var(--accent)"><span class="em">${C.lessons[nxt].emoji}</span><span style="flex:1"><span class="small muted">${t("continueLesson")}</span><br><span class="t" dir="ltr">${esc(nxtTitle)}</span>${nxtTranslation ? `<br><span class="small muted" dir="auto">${esc(nxtTranslation)}</span>` : ""}</span><span style="font-size:1.6rem">▶️</span></button>` : `<div class="card">🎉 ${t("lessonFinished")}</div>`}
       ${sectionsFor(p).map((s) => `<button class="section-card" style="background:${s.color}" data-go="#/section/${s.id}"><span class="em">${s.emoji}</span><span><h3>${esc(translatedSection(s.title))}</h3><p>${esc(translatedSection(s.desc))}</p></span></button>`).join("")}
       ${kid ? "" : `<button class="section-card locked" onclick="void 0" data-locked><span class="em">🤖</span><span><h3>${t("aiTutor")}</h3><p>${t("aiTutorDesc")}</p></span></button>`}
     </div>${tabbar("home")}`);
     const lk = $("[data-locked]"); if (lk) lk.onclick = () => toast(t("aiPlanned"));
-    if (kid) speak(t("homeHi", { name: p.name }), { lang: curLang() });
+    if (kid) speak(tEn("homeHi", { name: p.name }));
   }
 
   const translatedSection = (value) => tc(value) || value;
@@ -317,7 +336,8 @@
       <div class="section-card" style="background:${s.color}"><span class="em">${s.emoji}</span><span><h3>${esc(translatedSection(s.title))}</h3><p>${esc(translatedSection(s.desc))}</p></span></div>
       ${unitsFor(s, p).map((u) => `<div class="unit"><h3>${esc(translatedSection(u.title))}</h3>${u.soon ? `<div class="lesson-row locked"><span class="em">🔒</span><span><span class="t">${t("comingSoon")}</span><br><span class="small muted">${t("moreLessons")}</span></span></div>` :
         (u.lessons || []).map((lid) => { const L = C.lessons[lid], done = pr.lessons[lid], open = unlocked(lid, pr, p), hasVideo = L.activities.some((a) => a.type === "video");
-          return `<button class="lesson-row ${open ? "" : "locked"}" data-lid="${lid}" data-open="${open ? 1 : ""}"><span class="em">${open ? L.emoji : "🔒"}</span><span style="flex:1"><span class="t">${esc(translatedSection(L.title))}</span><br><span class="small muted">${esc(L.skill)} · ${L.activities.length} ${t("activities", { n: "" }).trim()}${hasVideo ? ` · ${t("videoTag")}` : ""}</span></span>${done ? starsHtml(done.stars) : open ? "▶️" : ""}</button>`; }).join("")}</div>`).join("")}
+          const titleTranslation = tc(L.title);
+          return `<button class="lesson-row ${open ? "" : "locked"}" data-lid="${lid}" data-open="${open ? 1 : ""}"><span class="em">${open ? L.emoji : "🔒"}</span><span style="flex:1"><span class="t" dir="ltr">${esc(L.title)}</span>${titleTranslation ? `<br><span class="small muted" dir="auto">${esc(titleTranslation)}</span>` : ""}<br><span class="small muted">${esc(L.skill)} · ${L.activities.length} ${t("activities", { n: "" }).trim()}${hasVideo ? ` · ${t("videoTag")}` : ""}</span></span>${done ? starsHtml(done.stars) : open ? "▶️" : ""}</button>`; }).join("")}</div>`).join("")}
     </div>${tabbar("home")}`);
     $$("[data-lid]").forEach((b) => b.onclick = () => b.dataset.open ? go(`#/lesson/${b.dataset.lid}`) : toast(t("unlockMsg")));
   }
@@ -356,11 +376,12 @@
           const w = a.word === true ? a.answer : a.word;
           if (w) (ok ? st.rightWords : st.wrongWords).add(w);
           if (!ok && !st.retried.has(idx)) { st.queue.push(idx); st.retried.add(idx); }
-          const praise = ["great", "excellent", "wellDone", "brilliant"].map(t)[Math.floor(Math.random() * 4)];
+          const praiseKey = ["great", "excellent", "wellDone", "brilliant"][Math.floor(Math.random() * 4)];
+          const praise = t(praiseKey);
           ft.className = `footer ${ok ? "good" : "wrong"}`;
           ft.innerHTML = `<div class="fb">${ok ? "✓ " + praise : "✗ " + t("notQuite")}${!ok && answer ? `<small>${t("correctAnswer")} <b dir="ltr">${esc(answer)}</b></small>` : ""}${explain && !ok ? `<small dir="auto">${esc(explain)}</small>${helperLine(explain)}` : ""}${!ok ? `<small class="muted">${t("retryEnd")}</small>` : ""}</div><button class="btn ${ok ? "ok" : "bad"}" id="cnt">${t("continue")}</button>`;
           $("#cnt", ft).onclick = next;
-          if (kid) speak(ok ? praise : t("greatAgain"), { lang: curLang() });
+          if (kid) speak(tEn(ok ? praiseKey : "greatAgain"));
           else if (!ok && answer) speak(answer);
         }
       };
@@ -403,7 +424,7 @@
         ${st.wrongWords.size && !preview ? `<p class="small muted">${t("practiceList")} ${[...st.wrongWords].map((w) => `<span dir="ltr">${esc(w)}</span>${gl(w) ? ` — <span dir="auto">${esc(gl(w))}</span>` : ""}`).join(", ")}</p>` : ""}
         <div style="width:100%;display:flex;flex-direction:column;gap:10px"><button class="btn" data-go="${backTo}">${t("continue")}</button><button class="btn ghost" id="again">${t("tryAgain")}</button></div></div>`);
       $("#again").onclick = () => lesson(lid, preview);
-      speak(kid ? t(stars === 1 ? "spokenStars" : "spokenStarsPlural", { n: stars }) : t("summaryTitle"), { lang: kid ? curLang() : "en" });
+      speak(tEn(kid ? stars === 1 ? "spokenStars" : "spokenStarsPlural" : "summaryTitle", { n: stars }));
     }
     show();
   }
@@ -412,7 +433,12 @@
   const R = {
     video(a, el, ctx) {
       let index = 0, started = false, playing = false, ended = false, captions = true, speed = 1, token = 0;
+      let startupTimer = null, estimateTimer = null, safetyTimer = null;
       const scenes = a.scenes;
+      const clearSceneTimers = () => {
+        clearVideoTimer(startupTimer); clearVideoTimer(estimateTimer); clearVideoTimer(safetyTimer);
+        startupTimer = estimateTimer = safetyTimer = null;
+      };
       el.innerHTML = `<div class="video-title" dir="ltr">${esc(a.title)}</div>
         <div class="video-stage" id="vstage"><div class="video-art" id="vart"></div>
           <button class="video-overlay" id="vstart" aria-label="${t("play")}">▶︎</button>
@@ -452,16 +478,31 @@
       };
       const playScene = () => {
         if (index >= scenes.length) return;
+        clearSceneTimers();
         started = true; playing = true; ended = false;
         const thisToken = ++token, scene = scenes[index];
-        videoCleanup = () => { playing = false; token++; };
+        videoCleanup = () => { playing = false; token++; clearSceneTimers(); };
         paint();
         const words = scene.caption.split(/\s+/).length;
-        videoTimer = setTimeout(() => advance(thisToken), (1200 + 420 * words) / speed);
+        const estimate = (1200 + 420 * words) / speed;
+        let speechStarted = false;
+        const useEstimate = () => {
+          if (!playing || thisToken !== token || speechStarted) return;
+          estimateTimer = setVideoTimer(() => advance(thisToken), estimate);
+        };
+        if (!hasTTS) estimateTimer = setVideoTimer(() => advance(thisToken), estimate);
+        else startupTimer = setVideoTimer(useEstimate, 1500);
         const starts = []; let pos = 0;
         scene.caption.split(" ").forEach((word) => { starts.push(pos); pos += word.length + 1; });
         speak(scene.caption, {
           rate: speed,
+          onstart: () => {
+            if (!playing || thisToken !== token) return;
+            speechStarted = true;
+            clearVideoTimer(startupTimer); startupTimer = null;
+            clearVideoTimer(estimateTimer); estimateTimer = null;
+            safetyTimer = setVideoTimer(() => { if (speechStarted) advance(thisToken); }, Math.max(4000, 2.5 * estimate));
+          },
           onboundary: (event) => {
             const k = starts.findIndex((start, i) => event.charIndex >= start && (i === starts.length - 1 || event.charIndex < starts[i + 1]));
             $$("#vcap-en span", el).forEach((span) => span.classList.toggle("hl", +span.dataset.vword === k));
@@ -471,9 +512,8 @@
       };
       const advance = (thisToken) => {
         if (!playing || thisToken !== token) return;
+        clearSceneTimers();
         playing = false;
-        if (videoTimer) clearTimeout(videoTimer);
-        videoTimer = null;
         if (index + 1 < scenes.length) { index++; playScene(); }
         else { ended = true; paint(); }
       };

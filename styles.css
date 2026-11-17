@@ -136,7 +136,7 @@ table.admin th{background:#F1F4F8}
 .tag{display:inline-block;border-radius:6px;padding:2px 6px;font-size:.72rem;font-weight:800;background:#E5F6EE;color:#14663F}
 .tag.soon{background:#EEF1F5;color:#5B6776}
 .back{border:0;background:none;font-weight:800;color:var(--brand);padding:0;font-size:1rem;align-self:flex-start}
-.toast{position:fixed;top:16px;left:50%;transform:translateX(-50%);background:#16212E;color:#fff;padding:10px 16px;border-radius:999px;font-weight:700;z-index:20;font-size:.9rem}
+.toast{position:fixed;top:auto;bottom:calc(96px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);max-width:90vw;background:#16212E;color:#fff;padding:10px 16px;border-radius:999px;font-weight:700;z-index:20;font-size:.9rem;text-align:center}
 a{color:var(--brand)}
 .wordview.long .slot{min-width:32px;height:48px;font-size:1.35rem;padding:0 4px}
 .wordview.long{gap:4px}

@@ -12,6 +12,11 @@ async def shot(page, name):
     await page.screenshot(path=str(path), full_page=False)
     SHOTS.append(str(path))
 
+async def assert_no_french_no_voice_toast(page, screen):
+    message = await page.evaluate("window.LEXORA_I18N.strings.noVoice.fr.replace('{lang}', 'Français')")
+    toast = page.locator(".toast:visible", has_text=message)
+    assert await toast.count() == 0, f"Unexpected French no-voice toast on {screen}"
+
 
 async def play(page, tag, maxsteps=120):
     video_shot_done = False
@@ -31,6 +36,8 @@ async def play(page, tag, maxsteps=120):
                 video_shot_done = True
             elif await page.locator("#vstart").is_visible():
                 await page.locator("#vstart").click()
+                if tag == "k3":
+                    await assert_no_french_no_voice_toast(page, "K3 video")
             if tag == "k3" and not video_shot_done:
                 await page.wait_for_timeout(250)
                 await shot(page, "22-video.png")
@@ -141,6 +148,8 @@ async def main():
         assert all(label in tab for label, tab in zip(
             ["Apprendre", "Progrès", "Révision", "Profils"], tabs
         )), tabs
+        await page.wait_for_timeout(100)
+        await assert_no_french_no_voice_toast(page, "French home")
         await shot(page, "21-home-fr.png")
 
         await page.locator("[data-go='#/section/kids']").click()
