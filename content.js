@@ -195,12 +195,12 @@ window.LEXORA_CONTENT = {
           "500 = five hundred francs.",
           "1,000 = one thousand francs.",
           "10,000 = ten thousand francs."
-        ] },
+        ], say: "One hundred francs. Five hundred francs. One thousand francs. Ten thousand francs." },
         { type: "card", title: "Ask the price", lines: [
           "How much is it?",
           "It costs 500 francs.",
           "The bag costs 10,000 francs."
-        ] },
+        ], say: "How much is it? It costs five hundred francs. The bag costs ten thousand francs." },
         { type: "choice", prompt: "How much does the bag cost?", options: [{ t: "500 francs" }, { t: "5,000 francs" }, { t: "10,000 francs" }], answer: 2 },
         { type: "choice", prompt: "Which number is one thousand?", options: [{ t: "100" }, { t: "500" }, { t: "1,000" }, { t: "10,000" }], answer: 2 },
         { type: "match", prompt: "Match the numeral to the words.", pairs: [["100", "one hundred"], ["500", "five hundred"], ["1,000", "one thousand"], ["10,000", "ten thousand"]] },
@@ -218,8 +218,8 @@ window.LEXORA_CONTENT = {
           "Can I have two tomatoes?",
           "How much are the tomatoes?",
           "Use this for one thing and these for more than one."
-        ] },
-        { type: "choice", prompt: "Tomatoes cost 1,000 francs. How much are they?", options: [{ t: "500 francs" }, { t: "1,000 francs" }, { t: "2,000 francs" }], answer: 1 },
+        ], say: "I'd like some oranges, please. Can I have two tomatoes? How much are the tomatoes? Use this for one thing and these for more than one." },
+        { type: "choice", prompt: "Two mangoes cost 500 francs each. How much are they?", options: [{ t: "500 francs" }, { t: "1,000 francs" }, { t: "1,500 francs" }], answer: 1 },
         { type: "choice", prompt: "Listen to the customer. What would she like?", say: "Good morning. I'd like some bananas, please.", listen: true,
           options: [{ t: "Some bananas" }, { t: "Some tomatoes" }, { t: "A mango" }], answer: 0 },
         { type: "choice", prompt: "___ tomatoes are fresh.", options: [{ t: "This" }, { t: "These" }], answer: 1, sentence: "These tomatoes are fresh." },
@@ -234,7 +234,7 @@ window.LEXORA_CONTENT = {
         { type: "card", title: "The past simple", lines: [
           "Regular verbs: play → played; watch → watched.",
           "Some verbs change: go → went; have → had; see → saw; eat → ate."
-        ] },
+        ], say: "Regular verbs: play becomes played; watch becomes watched. Some verbs change: go becomes went; have becomes had; see becomes saw; eat becomes ate." },
         { type: "choice", prompt: "Yesterday, Paul ___ football in Buea.", options: [{ t: "played" }, { t: "play" }, { t: "plays" }], answer: 0, sentence: "Yesterday, Paul played football in Buea." },
         { type: "choice", prompt: "Ngozi ___ to Yaoundé yesterday.", options: [{ t: "went" }, { t: "goes" }, { t: "go" }], answer: 0, sentence: "Ngozi went to Yaoundé yesterday." },
         { type: "order", prompt: "Put the words in order.", words: ["Yesterday,", "Ama", "ate", "a", "mango."], say: "Yesterday, Ama ate a mango." },
@@ -275,7 +275,7 @@ window.LEXORA_CONTENT = {
           "The b is silent in lamb.",
           "The h is silent in hour.",
           "The s is silent in island."
-        ] },
+        ], say: "Knife. The k is silent. Write. The w is silent. Lamb. The b is silent. Hour. The h is silent. Island. The s is silent." },
         { type: "dictation", prompt: "Listen and spell the word.", say: "knife", answer: "knife", word: true },
         { type: "missing", prompt: "Which letter is missing?", say: "knife", word: "knife", hide: 0, emoji: "🔪", choices: ["k", "n", "t"] },
         { type: "build", prompt: "Build the word you hear.", say: "write", word: "write", emoji: "✍️" },
@@ -289,7 +289,7 @@ window.LEXORA_CONTENT = {
     s4: {
       title: "Spelling test 2", emoji: "📝", skill: "Spelling", words: ["knife", "write", "lamb", "hour", "island"],
       activities: [
-        { type: "card", title: "Test instructions", lines: ["Listen carefully and spell each silent-letter word."] },
+        { type: "card", title: "Test instructions", lines: ["Listen carefully and spell each silent-letter word."], say: "Listen carefully and spell each silent-letter word." },
         { type: "dictation", prompt: "Spell the word you hear.", say: "knife. The knife is sharp. knife.", answer: "knife", word: true },
         { type: "dictation", prompt: "Spell the word you hear.", say: "write. Please write your name. write.", answer: "write", word: true },
         { type: "dictation", prompt: "Spell the word you hear.", say: "lamb. The lamb is white. lamb.", answer: "lamb", word: true },
@@ -354,8 +354,8 @@ window.LEXORA_CONTENT = {
     m5: {
       title: "Shapes", emoji: "🔷", skill: "Shapes", words: ["circle", "square", "triangle", "rectangle"],
       activities: [
-        { type: "card", title: "Circle and square", lines: ["A circle is round.", "A square has four equal sides."] },
-        { type: "card", title: "Triangle and rectangle", lines: ["A triangle has three sides.", "A rectangle has four sides."] },
+        { type: "card", title: "Circle and square", lines: ["A circle is round.", "A square has four equal sides."], say: "A circle is round. A square has four equal sides." },
+        { type: "card", title: "Triangle and rectangle", lines: ["A triangle has three sides.", "A rectangle has four sides."], say: "A triangle has three sides. A rectangle has four sides." },
         { type: "choice", prompt: "Which shape has three sides?", options: [{ e: "🔵", t: "circle" }, { e: "🟥", t: "square" }, { e: "🔺", t: "triangle" }], answer: 2, pictures: true },
         { type: "choice", prompt: "Which shape has no corners?", options: [{ e: "🟥", t: "square" }, { e: "🔺", t: "triangle" }, { e: "🔵", t: "circle" }], answer: 2, pictures: true },
         { type: "match", prompt: "Match the shape to the picture.", pairs: [["circle", "🔵"], ["square", "🟥"], ["triangle", "🔺"], ["rectangle", "▭"]] },
@@ -367,7 +367,7 @@ window.LEXORA_CONTENT = {
     m6: {
       title: "Money & change", emoji: "💵", skill: "Everyday maths", words: ["price", "total", "change", "cost"],
       activities: [
-        { type: "card", title: "Money in Cameroon", lines: ["Prices in this lesson are in XAF (CFA francs).", "Add prices to find the total."] },
+        { type: "card", title: "Money in Cameroon", lines: ["Prices in this lesson are in XAF (CFA francs).", "Add prices to find the total."], say: "Prices in this lesson are in XAF, CFA francs. Add prices to find the total." },
         { type: "choice", prompt: "A bag of rice costs 4,500 XAF. A bottle of oil costs 1,500 XAF. What is the total?", options: [{ t: "6,000 XAF" }, { t: "5,000 XAF" }, { t: "7,000 XAF" }], answer: 0 },
         { type: "number", prompt: "A book costs 2,000 XAF. How much do 3 books cost?", unit: "XAF", answer: 6000 },
         { type: "number", prompt: "You buy things for 6,750 XAF and pay 10,000 XAF. How much change do you get?", unit: "XAF", answer: 3250 },

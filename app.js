@@ -544,11 +544,12 @@
       paint();
     },
     number(a, el, ctx, kid) {
-      el.innerHTML = `${promptMarkup(a.prompt)}${a.visual ? `<div class="number-visual" dir="ltr">${a.visual}</div>` : ""}<input class="typed numeric ${kid ? "kid-number" : ""}" id="num" type="text" inputmode="numeric" pattern="[0-9, ]*" autocomplete="off" aria-label="Answer">`;
+      const inputMarkup = `<input class="typed numeric ${kid ? "kid-number" : ""}" id="num" type="text" inputmode="numeric" pattern="[0-9, ]*" autocomplete="off" aria-label="Answer">`;
+      el.innerHTML = `${promptMarkup(a.prompt)}${a.visual ? `<div class="number-visual" dir="ltr">${a.visual}</div>` : ""}${a.unit ? `<div class="number-answer" dir="ltr">${inputMarkup}<span class="number-unit" dir="ltr">${esc(a.unit)}</span></div>` : inputMarkup}`;
       const input = $("#num", el);
       input.oninput = () => ctx.enable(!!input.value.trim());
       input.onkeydown = (event) => { if (event.key === "Enter" && input.value.trim()) $("#chk").click(); };
-      ctx.ready(() => ({ ok: Number(input.value.replace(/[,\s]/g, "")) === Number(a.answer), answer: a.answer }));
+      ctx.ready(() => ({ ok: Number(input.value.replace(/[,\s]/g, "")) === Number(a.answer), answer: a.unit ? `${Number(a.answer).toLocaleString("en-US")} ${a.unit}` : a.answer }));
     },
     card(a, el, ctx) {
       el.innerHTML = `<div class="flash" dir="ltr">${a.big ? `<div class="big">${a.big}</div>` : ""}${a.emoji ? `<div class="emoji">${a.emoji}</div>` : ""}

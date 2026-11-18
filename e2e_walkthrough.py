@@ -39,6 +39,32 @@ async def preview_screenshots(page, lesson_id, lang):
     await page.wait_for_timeout(100)
     await shot(page, f"new-{lesson_id}-2.png")
 
+async def open_m6_number_question(page):
+    await page.goto(BASE + "#/preview/m6")
+    await page.wait_for_selector("#cnt")
+    await page.locator("#cnt").click()
+    await page.locator(".opt").first.click()
+    await page.locator("#chk").click()
+    await page.locator("#cnt").click()
+    await page.wait_for_selector("#num")
+
+async def m6_unit_feedback_screenshot(page):
+    await select_profile_language(page, "en")
+    await open_m6_number_question(page)
+    assert await page.locator(".number-unit").inner_text() == "XAF"
+    await page.locator("#num").fill("999")
+    await page.locator("#chk").click()
+    await page.wait_for_selector(".footer.wrong")
+    feedback = await page.locator(".footer").inner_text()
+    assert "6,000 XAF" in feedback, f"Expected formatted unit answer, got: {feedback}"
+    await shot(page, "new-m6-unit.png")
+
+    await select_profile_language(page, "ar")
+    await open_m6_number_question(page)
+    assert await page.evaluate("document.documentElement.dir") == "rtl"
+    assert await page.locator(".number-answer").get_attribute("dir") == "ltr"
+    assert await page.locator(".number-unit").evaluate("(el) => getComputedStyle(el).direction") == "ltr"
+
 async def play(page, tag, maxsteps=120):
     video_shot_done = False
     help_shot_done = False
@@ -236,6 +262,7 @@ async def main():
         for lesson_id in ["k4", "k5", "k6", "a3", "a4", "a5", "s3", "s4", "m4", "m5", "m6"]:
             lang = {"k4": "fr", "k5": "ar"}.get(lesson_id, "en")
             await preview_screenshots(page, lesson_id, lang)
+        await m6_unit_feedback_screenshot(page)
 
         content_errors = await page.evaluate("""() => {
           const content = window.LEXORA_CONTENT, errors = [];

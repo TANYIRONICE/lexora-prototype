@@ -342,7 +342,7 @@
     "How much is it?": ["Combien ça coûte ?", "¿Cuánto cuesta?", "Quanto custa?", "كم ثمنه؟"],
     "It costs 500 francs.": ["Ça coûte 500 francs.", "Cuesta 500 francos.", "Custa 500 francos.", "ثمنه 500 فرنك."],
     "The bag costs 10,000 francs.": ["Le sac coûte 10 000 francs.", "La bolsa cuesta 10.000 francos.", "A bolsa custa 10.000 francos.", "ثمن الحقيبة 10,000 فرنك."],
-    "Tomatoes cost 1,000 francs. How much are they?": ["Les tomates coûtent 1 000 francs. Combien coûtent-elles ?", "Los tomates cuestan 1.000 francos. ¿Cuánto cuestan?", "Os tomates custam 1.000 francos. Quanto custam?", "ثمن الطماطم 1,000 فرنك. كم ثمنها؟"],
+    "Two mangoes cost 500 francs each. How much are they?": ["Deux mangues coûtent 500 francs chacune. Combien coûtent-elles ?", "Dos mangos cuestan 500 francos cada uno. ¿Cuánto cuestan?", "Duas mangas custam 500 francos cada. Quanto custam?", "ثمن حبتَي مانجو 500 فرنك لكل واحدة. كم ثمنهما؟"],
     "Listen to the customer. What would she like?": ["Écoute la cliente. Que voudrait-elle ?", "Escucha a la clienta. ¿Qué quiere?", "Ouça a cliente. O que ela gostaria?", "استمع إلى الزبونة. ماذا تريد؟"],
     "___ tomatoes are fresh.": ["___ tomates sont frais.", "___ tomates están frescos.", "___ tomates estão frescos.", "___ طماطم طازجة."],
     "“These tomato is fresh.” is correct English.": ["« These tomato is fresh. » est une phrase correcte en anglais.", "«These tomato is fresh» es una frase correcta en inglés.", "“These tomato is fresh.” está correto em inglês.", "جملة «These tomato is fresh.» صحيحة بالإنجليزية."],
