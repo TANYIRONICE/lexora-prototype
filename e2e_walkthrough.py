@@ -17,6 +17,27 @@ async def assert_no_french_no_voice_toast(page, screen):
     toast = page.locator(".toast:visible", has_text=message)
     assert await toast.count() == 0, f"Unexpected French no-voice toast on {screen}"
 
+async def select_profile_language(page, code):
+    names = {"en": "English", "fr": "Français", "es": "Español", "pt": "Português", "ar": "العربية"}
+    await page.goto(BASE + "#/home")
+    await page.locator(".lang-pill").click()
+    await page.locator(".language-option", has_text=names[code]).click()
+    assert await page.evaluate("document.documentElement.lang") == code
+
+async def preview_screenshots(page, lesson_id, lang):
+    await select_profile_language(page, lang)
+    await page.goto(BASE + f"#/preview/{lesson_id}")
+    await page.wait_for_selector("#act")
+    await page.wait_for_timeout(100)
+    if lesson_id == "k4":
+        assert await page.locator("#vcap-tr").inner_text()
+    if lesson_id == "k5":
+        assert await page.evaluate("document.documentElement.dir") == "rtl"
+        assert await page.locator(".gloss").count()
+    await shot(page, f"new-{lesson_id}-1.png")
+    await page.locator("#cnt").click()
+    await page.wait_for_timeout(100)
+    await shot(page, f"new-{lesson_id}-2.png")
 
 async def play(page, tag, maxsteps=120):
     video_shot_done = False
@@ -212,9 +233,56 @@ async def main():
         assert await page.locator(".help").count() > 0
         assert await play(page, "m3-ar")
 
+        for lesson_id in ["k4", "k5", "k6", "a3", "a4", "a5", "s3", "s4", "m4", "m5", "m6"]:
+            lang = {"k4": "fr", "k5": "ar"}.get(lesson_id, "en")
+            await preview_screenshots(page, lesson_id, lang)
+
+        content_errors = await page.evaluate("""() => {
+          const content = window.LEXORA_CONTENT, errors = [];
+          Object.entries(content.lessons).forEach(([lessonId, lesson]) => {
+            lesson.activities.forEach((activity, index) => {
+              const where = `${lessonId} activity ${index + 1}`;
+              if (activity.type === 'choice' &&
+                  (!Number.isInteger(activity.answer) || activity.answer < 0 || activity.answer >= (activity.options || []).length)) {
+                errors.push(`${where}: choice answer is not a valid option index`);
+              }
+              if (activity.type === 'missing') {
+                const letter = activity.word && activity.word[activity.hide];
+                if (!letter || !(activity.choices || []).includes(letter)) {
+                  errors.push(`${where}: missing letter is not among choices`);
+                }
+              }
+              if (activity.type === 'number' &&
+                  (typeof activity.answer !== 'number' || !Number.isFinite(activity.answer))) {
+                errors.push(`${where}: number answer is not numeric`);
+              }
+              if (activity.type === 'match') {
+                const pairs = activity.pairs || [];
+                const keys = pairs.map(pair => JSON.stringify(pair));
+                if (new Set(keys).size !== pairs.length) errors.push(`${where}: match pairs are not unique`);
+              }
+              if (activity.type === 'order' && (!Array.isArray(activity.words) || activity.words.length === 0)) {
+                errors.push(`${where}: order words are empty`);
+              }
+            });
+          });
+          const references = {};
+          content.sections.forEach(section => section.units.forEach(unit => (unit.lessons || []).forEach(lessonId => {
+            if (!content.lessons[lessonId]) errors.push(`${section.id}: unit references missing lesson ${lessonId}`);
+            references[lessonId] = (references[lessonId] || 0) + 1;
+          })));
+          Object.keys(content.lessons).forEach(lessonId => {
+            if (references[lessonId] !== 1) errors.push(`${lessonId}: referenced by ${references[lessonId] || 0} units`);
+          });
+          return errors;
+        }""")
+        print("CONTENT ERRORS:", content_errors)
+        assert not content_errors, content_errors
+
         coverage = await page.evaluate("""() => {
           const content = window.LEXORA_CONTENT, i18n = window.LEXORA_I18N;
           const codes = ['en', 'fr', 'es', 'pt', 'ar'];
+          const newLessonIds = new Set(['k4', 'k5', 'k6', 'a3', 'a4', 'a5', 's3', 's4', 'm4', 'm5', 'm6']);
           const missingStrings = Object.entries(i18n.strings)
             .filter(([, values]) => codes.some(code => !values[code]))
             .map(([key]) => key);
@@ -224,12 +292,14 @@ async def main():
             required.add(section.title); required.add(section.desc);
             section.units.forEach(unit => required.add(unit.title));
           });
-          Object.values(content.lessons).forEach(lesson => {
+          Object.entries(content.lessons).forEach(([lessonId, lesson]) => {
             required.add(lesson.title);
             lesson.activities.forEach(activity => {
               if (activity.prompt) required.add(activity.prompt);
               if (activity.explain) required.add(activity.explain);
               if (activity.title) required.add(activity.title);
+              if (newLessonIds.has(lessonId) && activity.text) required.add(activity.text);
+              if (newLessonIds.has(lessonId)) (activity.lines || []).forEach(line => required.add(line));
               (activity.pages || []).forEach(page => required.add(page.text));
               (activity.scenes || []).forEach(scene => required.add(scene.caption));
             });

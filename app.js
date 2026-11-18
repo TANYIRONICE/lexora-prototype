@@ -9,11 +9,15 @@
     { id: "first", e: "🌱", t: "First lesson", test: (p) => doneCount(p) >= 1 },
     { id: "three", e: "🚀", t: "3 lessons", test: (p) => doneCount(p) >= 3 },
     { id: "perfect", e: "💯", t: "Perfect score", test: (p) => Object.values(p.lessons).some((l) => l.best === 100) },
-    { id: "speller", e: "🐝", t: "Spelling star", test: (p) => p.lessons.s1 && p.lessons.s2 },
+    { id: "speller", e: "🐝", t: "Spelling star", test: (p) => (p.lessons.s1 && p.lessons.s2) || (p.lessons.s3 && p.lessons.s4) },
     { id: "reader", e: "📖", t: "Story time", test: (p) => !!p.lessons.k2 },
     { id: "streak3", e: "🔥", t: "3-day streak", test: (p) => p.streak.count >= 3 },
     { id: "movie", e: "🎬", t: "Movie time", key: "movie", test: (p) => !!p.lessons.k3 },
-    { id: "maths", e: "🧮", t: "Maths whiz", key: "mathsWhiz", test: (p) => ["m1", "m2", "m3"].some((id) => p.lessons[id]) }
+    { id: "maths", e: "🧮", t: "Maths whiz", key: "mathsWhiz", test: (p) => ["m1", "m2", "m3"].some((id) => p.lessons[id]) },
+    { id: "family", e: "👪", t: "Family words", key: "familyBadge", test: (p) => !!p.lessons.k5 },
+    { id: "shopper", e: "🛒", t: "Smart shopper", key: "shopperBadge", test: (p) => !!(p.lessons.a3 && p.lessons.a4) },
+    { id: "shapes", e: "🔷", t: "Shape spotter", key: "shapesBadge", test: (p) => !!p.lessons.m5 },
+    { id: "ten", e: "🏆", t: "10 lessons", key: "tenBadge", test: (p) => doneCount(p) >= 10 }
   ];
 
   // ---------- state ----------
@@ -326,7 +330,7 @@
   };
   const glossLabel = (word) => { const meaning = gl(word); return meaning ? `<div class="gloss"><span dir="ltr">${esc(word)}</span> — <span dir="auto">${esc(meaning)}</span></div>` : ""; };
   const promptMarkup = (prompt) => `<div class="prompt" dir="ltr">${esc(prompt)}</div>${helperLine(prompt)}`;
-  const badgeStringKey = (id) => ({ first: "badgeFirst", three: "threeBadge", perfect: "perfectBadge", speller: "spellerBadge", reader: "readerBadge", streak3: "streakBadge", movie: "movie", maths: "mathsWhiz" }[id] || id);
+  const badgeStringKey = (id) => ({ first: "badgeFirst", three: "threeBadge", perfect: "perfectBadge", speller: "spellerBadge", reader: "readerBadge", streak3: "streakBadge", movie: "movie", maths: "mathsWhiz", family: "familyBadge", shopper: "shopperBadge", shapes: "shapesBadge", ten: "tenBadge" }[id] || id);
 
   function section(id) {
     const s = C.sections.find((x) => x.id === id); if (!s) return go("#/home");
