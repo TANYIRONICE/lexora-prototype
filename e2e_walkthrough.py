@@ -1,4 +1,5 @@
 import asyncio
+import json
 from pathlib import Path
 from playwright.async_api import async_playwright
 
@@ -64,6 +65,225 @@ async def m6_unit_feedback_screenshot(page):
     assert await page.evaluate("document.documentElement.dir") == "rtl"
     assert await page.locator(".number-answer").get_attribute("dir") == "ltr"
     assert await page.locator(".number-unit").evaluate("(el) => getComputedStyle(el).direction") == "ltr"
+
+
+VOICE_LANGS = ["en-GB", "fr-FR", "es-ES", "pt-BR", "ar-SA"]
+VOICE_STUB = r"""
+(() => {
+  window.__voiceLangs = window.__voiceLangs || __VOICE_LANGS__;
+  window.__spoken = [];
+  window.__speechEvents = [];
+  let queue = [], running = false, timer = null, generation = 0;
+  const details = (utterance) => ({
+    text: utterance.text,
+    lang: utterance.voice?.lang || utterance.lang
+  });
+  const pump = () => {
+    if (running || !queue.length) return;
+    running = true;
+    const { utterance, id } = queue.shift();
+    timer = setTimeout(() => {
+      if (id !== generation) { running = false; pump(); return; }
+      window.__speechEvents.push({ type: "start", ...details(utterance) });
+      if (utterance.onstart) utterance.onstart({});
+      timer = setTimeout(() => {
+        if (id === generation) {
+      window.__speechEvents.push({
+        type: "end", ...details(utterance),
+        scene: document.querySelector("#vcount")?.textContent || ""
+      });
+          running = false;
+          if (utterance.onend) utterance.onend({});
+        } else running = false;
+        pump();
+      }, 30);
+    }, 30);
+  };
+  const synth = {
+    onvoiceschanged: null,
+    getVoices() {
+      return window.__voiceLangs.map((lang) => ({
+        lang, default: lang === "en-GB", localService: true
+      }));
+    },
+    speak(utterance) {
+      window.__spoken.push(details(utterance));
+      queue.push({ utterance, id: generation });
+      pump();
+    },
+    cancel() {
+      generation++;
+      queue = [];
+      if (timer) clearTimeout(timer);
+      timer = null;
+      running = false;
+    }
+  };
+  Object.defineProperty(window, "speechSynthesis", { configurable: true, value: synth });
+  window.SpeechSynthesisUtterance = function (text) {
+    this.text = String(text);
+    this.lang = "";
+    this.voice = null;
+    this.rate = 1;
+  };
+  setTimeout(() => { if (synth.onvoiceschanged) synth.onvoiceschanged(); }, 0);
+})();
+"""
+
+
+async def mocked_voice_page(browser, lang, voices=None, voice_help=True, errors=None):
+    context = await browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=1)
+    voice_langs = VOICE_LANGS if voices is None else voices
+    await context.add_init_script(VOICE_STUB.replace("__VOICE_LANGS__", json.dumps(voice_langs)))
+    page = await context.new_page()
+    if errors is not None:
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        page.on("console", lambda message: errors.append(message.text) if message.type == "error" else None)
+    await page.goto(BASE)
+    state = {
+        "parent": None,
+        "profiles": [{
+            "id": "voice-test", "name": "Ama", "avatar": "🦊", "type": "child",
+            "ageBand": "5–7", "lang": lang, "voiceHelp": voice_help
+        }],
+        "activeId": "voice-test",
+        "progress": {},
+        "lang": "en"
+    }
+    await page.evaluate("(state) => localStorage.setItem('lexora_proto_v1', JSON.stringify(state))", state)
+    await page.reload()
+    await page.goto(BASE + "#/home")
+    await page.wait_for_timeout(80)
+    return context, page
+
+
+async def seek_k1_prompt(page, prompt):
+    await page.goto(BASE + "#/preview/k1")
+    await page.wait_for_timeout(50)
+    start = await page.evaluate("window.__spoken.length")
+    for _ in range(12):
+        current = page.locator("#act .prompt")
+        if await current.count() and await current.first.inner_text() == prompt:
+            return start
+        before = await page.evaluate("window.__spoken.length")
+        if await page.locator("#cnt").count():
+            await page.locator("#cnt").click()
+        else:
+            raise AssertionError(f"Could not advance K1 preview to {prompt!r}")
+        await page.wait_for_timeout(50)
+        current = page.locator("#act .prompt")
+        if await current.count() and await current.first.inner_text() == prompt:
+            return before
+        start = before
+    raise AssertionError(f"Could not find K1 prompt {prompt!r}")
+
+
+async def mocked_voice_tests(browser, errors):
+    prompt = "Tap the picture that starts with B."
+    context, page = await mocked_voice_page(browser, "fr", errors=errors)
+    start = await seek_k1_prompt(page, prompt)
+    await page.wait_for_timeout(80)
+    spoken_a = await page.evaluate("(start) => window.__spoken.slice(start)", start)
+    translated_prompt = await page.evaluate("(text) => window.LEXORA_I18N.tr[text].fr", prompt)
+    assert spoken_a[:2] == [
+        {"text": translated_prompt, "lang": "fr-FR"},
+        {"text": prompt, "lang": "en-GB"}
+    ], spoken_a
+    print("VOICE SCENARIO a:", spoken_a)
+    await context.close()
+
+    context, page = await mocked_voice_page(browser, "fr", errors=errors)
+    await page.goto(BASE + "#/preview/k3")
+    await page.wait_for_selector("#vstart")
+    await page.evaluate("window.__spoken = []; window.__speechEvents = []")
+    await page.locator("#vstart").click()
+    caption = "This apple is red."
+    translated_caption = await page.evaluate("(text) => window.LEXORA_I18N.tr[text].fr", caption)
+    await page.wait_for_function(
+        "(text) => window.__speechEvents.some((event) => event.type === 'end' && event.text === text)",
+        arg=caption
+    )
+    english_end = await page.evaluate(
+        "(text) => window.__speechEvents.find((event) => event.type === 'end' && event.text === text)",
+        caption
+    )
+    assert english_end["scene"].endswith("1 / 6"), english_end
+    await page.wait_for_function(
+        "(text) => window.__speechEvents.some((event) => event.type === 'end' && event.text === text)",
+        arg=translated_caption
+    )
+    translated_end = await page.evaluate(
+        "(text) => window.__speechEvents.find((event) => event.type === 'end' && event.text === text)",
+        translated_caption
+    )
+    assert translated_end["scene"].endswith("1 / 6"), translated_end
+    await page.wait_for_function("document.querySelector('#vcount').textContent.endsWith('2 / 6')")
+    spoken_b = await page.evaluate("window.__spoken.slice(0, 2)")
+    assert spoken_b == [
+        {"text": caption, "lang": "en-GB"},
+        {"text": translated_caption, "lang": "fr-FR"}
+    ], spoken_b
+    print("VOICE SCENARIO b:", spoken_b)
+    await context.close()
+
+    context, page = await mocked_voice_page(browser, "ar", ["en-GB"], voice_help=False, errors=errors)
+    await page.goto(BASE + "#/settings")
+    await page.locator("#voice-help").check()
+    await page.goto(BASE + "#/preview/k1")
+    await page.wait_for_selector("#cnt")
+    await page.locator("#cnt").click()
+    await page.wait_for_timeout(100)
+    first_count = await page.locator(".toast:visible").count()
+    await page.locator("#cnt").click()
+    await page.wait_for_timeout(100)
+    message_c = await page.evaluate(
+        "window.LEXORA_I18N.strings.noVoiceHelp.ar.replace('{lang}', 'العربية')"
+    )
+    toast_count = await page.locator(".toast:visible", has_text=message_c).count()
+    spoken_c = await page.evaluate("window.__spoken")
+    assert first_count == 1 and toast_count == 1, (first_count, toast_count)
+    assert spoken_c and all(not item["lang"].lower().startswith("ar") for item in spoken_c), spoken_c
+    assert len(spoken_c) >= 2 and all(item["lang"] == "en-GB" for item in spoken_c), spoken_c
+    print("VOICE SCENARIO c:", spoken_c)
+    await context.close()
+
+    context, page = await mocked_voice_page(browser, "fr", errors=errors)
+    await page.goto(BASE + "#/settings")
+    checkbox = page.locator("#voice-help")
+    assert await checkbox.is_checked()
+    await shot(page, "voice-setting.png")
+    await checkbox.uncheck()
+    saved = await page.evaluate(
+        "JSON.parse(localStorage.getItem('lexora_proto_v1')).profiles[0].voiceHelp"
+    )
+    assert saved is False
+    start = await seek_k1_prompt(page, prompt)
+    await page.wait_for_timeout(80)
+    spoken_d = await page.evaluate("(start) => window.__spoken.slice(start)", start)
+    assert spoken_d and all(not item["lang"].lower().startswith("fr") for item in spoken_d), spoken_d
+    print("VOICE SCENARIO d:", spoken_d)
+    await context.close()
+
+    context, page = await mocked_voice_page(browser, "en", errors=errors)
+    start = await seek_k1_prompt(page, prompt)
+    await page.wait_for_timeout(80)
+    spoken_e = await page.evaluate("(start) => window.__spoken.slice(start)", start)
+    assert spoken_e == [{"text": prompt, "lang": "en-GB"}], spoken_e
+    print("VOICE SCENARIO e:", spoken_e)
+    await context.close()
+
+    context, page = await mocked_voice_page(browser, "fr", errors=errors)
+    start = await seek_k1_prompt(page, prompt)
+    await page.locator(".opt").nth(1).click()
+    await page.locator("#chk").click()
+    await page.wait_for_timeout(80)
+    spoken_f = await page.evaluate("(start) => window.__spoken.slice(start)", start)
+    praise = await page.evaluate("""() => ["great", "excellent", "wellDone", "brilliant"]
+      .map((key) => window.LEXORA_I18N.strings[key].fr)""")
+    assert any(item["text"] in praise and item["lang"] == "fr-FR" for item in spoken_f), spoken_f
+    print("VOICE SCENARIO f:", spoken_f)
+    await context.close()
+
 
 async def play(page, tag, maxsteps=120):
     video_shot_done = False
@@ -348,6 +568,7 @@ async def main():
         assert not coverage["missingStrings"], coverage["missingStrings"]
         assert not coverage["missingTranslations"], coverage["missingTranslations"]
         assert not coverage["missingGloss"], coverage["missingGloss"]
+        await mocked_voice_tests(browser, errors)
         print("SCREENSHOTS:", SHOTS)
         print("ERRORS:", errors)
         assert not errors, errors

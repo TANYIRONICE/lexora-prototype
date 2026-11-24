@@ -43,6 +43,21 @@
   }
   const tc = (english) => curLang() === "en" ? "" : ((window.LEXORA_I18N.tr[english] || {})[curLang()] || "");
   const gl = (word) => curLang() === "en" ? "" : ((window.LEXORA_I18N.gloss[word.toLowerCase()] || {})[curLang()] || "");
+  const helpOn = () => curLang() !== "en" && active()?.voiceHelp !== false;
+  const helpPart = (text) => helpOn() && text ? { text, lang: curLang() } : null;
+  function speakAuto(prompt, englishText) {
+    if (helpOn()) {
+      speakSeq([helpPart(tc(prompt)), englishText ? { text: englishText, lang: "en" } : null].filter(Boolean));
+    } else if (englishText) speak(englishText);
+  }
+  function speakUi(key, vars = {}) {
+    const lang = curLang();
+    if (helpOn() && lang !== "en") {
+      if (voiceFor(lang)) { speakSeq([{ text: t(key, vars), lang }]); return; }
+      noteMissingHelpVoice(lang);
+    }
+    speak(tEn(key, vars));
+  }
   function prog(pid) {
     S.progress[pid] = S.progress[pid] || { lessons: {}, skills: {}, words: [], review: [], streak: { last: null, count: 0 }, badges: [], seconds: 0, log: [] };
     return S.progress[pid];
@@ -67,38 +82,102 @@
     return b;
   }
   const norm = (s) => s.toLowerCase().replace(/[^\p{L}\p{N}\s']/gu, "").replace(/\s+/g, " ").trim();
-  function toast(msg) {
+  function toast(msg, ms = 2200) {
     const t = document.createElement("div"); t.className = "toast"; t.textContent = msg;
-    document.body.appendChild(t); setTimeout(() => t.remove(), 2200);
+    document.body.appendChild(t); setTimeout(() => t.remove(), ms);
   }
   const starsHtml = (n, of = 3) => `<span class="stars">${"★".repeat(n)}<span class="off">${"★".repeat(of - n)}</span></span>`;
 
   // ---------- audio (text-to-speech stands in for recorded audio) ----------
   let voice = null;
+  let speechSequenceId = 0;
+  const missingHelpVoiceNotices = new Set();
   const hasTTS = "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
   function pickVoice() {
     const vs = speechSynthesis.getVoices();
     voice = vs.find((v) => /en[-_]GB/i.test(v.lang)) || vs.find((v) => /^en/i.test(v.lang)) || null;
   }
   if (hasTTS) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
-  function speak(text, opts = {}) {
-    if (!hasTTS) { toast(t("noVoiceBrowser")); return; }
-    speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    const code = opts.lang;
-    if (code && code !== "en") {
-      const v = speechSynthesis.getVoices().find((item) => item.lang.toLowerCase().startsWith(code.toLowerCase()));
-      if (!v) { toast(t("noVoice", { lang: langInfo(code).name })); return; }
-      u.voice = v; u.lang = v.lang;
-    } else {
-      if (voice) u.voice = voice;
-      u.lang = voice ? voice.lang : "en-GB";
+  function voiceFor(code) {
+    if (!hasTTS) return null;
+    if (code === "en") return voice;
+    const target = String(code).toLowerCase().replace(/_/g, "-");
+    const regions = { fr: ["fr-fr"], es: ["es-es"], pt: ["pt-br", "pt-pt"] }[target] || [];
+    const candidates = speechSynthesis.getVoices().filter((item) => {
+      const lang = String(item.lang || "").toLowerCase().replace(/_/g, "-");
+      return lang === target || lang.startsWith(`${target}-`);
+    });
+    const regionRank = (item) => {
+      const lang = String(item.lang || "").toLowerCase().replace(/_/g, "-");
+      const index = regions.indexOf(lang);
+      return index < 0 ? regions.length : index;
+    };
+    return candidates.sort((a, b) => regionRank(a) - regionRank(b) ||
+      Number(!!b.default) - Number(!!a.default) || Number(!!b.localService) - Number(!!a.localService))[0] || null;
+  }
+  function noteMissingHelpVoice(code) {
+    if (!hasTTS || !speechSynthesis.getVoices().length || missingHelpVoiceNotices.has(code)) return;
+    missingHelpVoiceNotices.add(code);
+    toast(t("noVoiceHelp", { lang: langInfo(code).name }), 4500);
+  }
+  function speakSeq(parts, opts = {}) {
+    const sequenceId = ++speechSequenceId;
+    if (hasTTS) speechSynthesis.cancel();
+    const queued = [];
+    const onSequenceEnd = () => {
+      if (sequenceId === speechSequenceId && opts.onend) opts.onend();
+    };
+    const onDropped = () => { if (opts.onend) setTimeout(() => opts.onend(), 0); };
+    if (!hasTTS) {
+      if ((parts || []).some((part) => part && part.text)) toast(t("noVoiceBrowser"));
+      onDropped();
+      return;
     }
-    u.rate = opts.rate || 0.9;
-    if (opts.onstart) u.onstart = opts.onstart;
-    if (opts.onboundary) u.onboundary = opts.onboundary;
-    if (opts.onend) u.onend = opts.onend;
-    speechSynthesis.speak(u);
+    (parts || []).forEach((part) => {
+      if (!part || !part.text) return;
+      const lang = part.lang || "en";
+      const selectedVoice = lang === "en" ? voice : voiceFor(lang);
+      if (lang !== "en" && !selectedVoice) {
+        if (part.explicit) toast(t("noVoice", { lang: langInfo(lang).name }));
+        else noteMissingHelpVoice(lang);
+        return;
+      }
+      queued.push({ part, lang, voice: selectedVoice });
+    });
+    if (!queued.length) {
+      onDropped();
+      return;
+    }
+    queued.forEach(({ part, lang, voice: selectedVoice }, index) => {
+      const utterance = new SpeechSynthesisUtterance(part.text);
+      if (lang === "en") {
+        if (selectedVoice) utterance.voice = selectedVoice;
+        utterance.lang = selectedVoice ? selectedVoice.lang : "en-GB";
+      } else {
+        utterance.voice = selectedVoice;
+        utterance.lang = selectedVoice.lang;
+      }
+      utterance.rate = part.rate || opts.rate || 0.9;
+      if (index === 0 && opts.onstart) utterance.onstart = (event) => {
+        if (sequenceId === speechSequenceId) opts.onstart(event);
+      };
+      if (part.boundary && (part.onboundary || opts.onboundary)) utterance.onboundary = (event) => {
+        if (sequenceId === speechSequenceId) (part.onboundary || opts.onboundary)(event);
+      };
+      if (part.onend || (index === queued.length - 1 && opts.onend)) utterance.onend = (event) => {
+        if (sequenceId !== speechSequenceId) return;
+        if (part.onend) part.onend(event);
+        if (index === queued.length - 1) onSequenceEnd();
+      };
+      speechSynthesis.speak(utterance);
+    });
+  }
+  function speak(text, opts = {}) {
+    const lang = opts.lang || "en";
+    speakSeq([{
+      text, lang, rate: opts.rate, boundary: !!opts.onboundary,
+      onboundary: opts.onboundary, explicit: !!opts.lang && lang !== "en"
+    }], opts);
   }
   const videoTimers = new Set();
   const setVideoTimer = (callback, delay) => {
@@ -119,6 +198,7 @@
     clearVideoTimers();
     if (videoCleanup) videoCleanup();
     videoCleanup = null;
+    speechSequenceId++;
     if (hasTTS) speechSynthesis.cancel();
   };
   const speakBtns = (text, big) => `<div class="speakrow"><button class="speak ${big ? "big" : ""}" data-say="${esc(text)}" aria-label="Play audio">🔊${big ? "" : ` ${t("listen")}`}</button><button class="speak slow" data-say="${esc(text)}" data-rate="0.55" aria-label="Play slowly">🐢 ${t("slow")}</button></div>`;
@@ -218,7 +298,7 @@
     $("#nm").oninput = upd; $("#ok").onchange = upd;
     $$(".seg button").forEach((b) => b.onclick = () => { mode = b.dataset.m; $$(".seg button").forEach((x) => x.classList.toggle("on", x === b)); });
     $("#go").onclick = () => {
-      const p = { id: uid(), name: $("#nm").value.trim(), avatar: "🧑🏾", type: "learner", level: "Beginner A1", lang: $("#profile-lang").value };
+      const p = { id: uid(), name: $("#nm").value.trim(), avatar: "🧑🏾", type: "learner", level: "Beginner A1", lang: $("#profile-lang").value, voiceHelp: true };
       S.profiles.push(p); S.activeId = p.id; save();
       go(mode === "quiz" ? "#/placement" : "#/home");
     };
@@ -237,7 +317,7 @@
     $("#nm").oninput = upd; $("#ok").onchange = upd;
     $("#go").onclick = () => {
       S.parent = { name: $("#nm").value.trim(), contact: $("#em").value.trim(), consentAt: new Date().toISOString(), policyVersion: "0.1-demo" };
-      const me = { id: uid(), name: S.parent.name, avatar: "🧑🏾‍🦱", type: "learner", isParent: true, level: "Beginner A1", lang: S.lang || "en" };
+      const me = { id: uid(), name: S.parent.name, avatar: "🧑🏾‍🦱", type: "learner", isParent: true, level: "Beginner A1", lang: S.lang || "en", voiceHelp: true };
       S.profiles.push(me); save();
       sessionStorage.setItem("gate", Date.now());
       go("#/addchild");
@@ -257,7 +337,7 @@
     $$("[data-a]").forEach((b) => b.onclick = () => { av = b.dataset.a; $$("[data-a]").forEach((x) => x.classList.toggle("on", x === b)); });
     $$("[data-b]").forEach((b) => b.onclick = () => { band = b.dataset.b; $$("[data-b]").forEach((x) => x.classList.toggle("on", x === b)); });
     $("#go").onclick = () => {
-      const p = { id: uid(), name: $("#nm").value.trim(), avatar: av, type: "child", ageBand: band, lang: $("#child-lang").value };
+      const p = { id: uid(), name: $("#nm").value.trim(), avatar: av, type: "child", ageBand: band, lang: $("#child-lang").value, voiceHelp: true };
       S.profiles.push(p); save(); toast(t("toastAdded", { name: p.name })); go("#/profiles");
     };
   }
@@ -320,7 +400,7 @@
       ${kid ? "" : `<button class="section-card locked" onclick="void 0" data-locked><span class="em">🤖</span><span><h3>${t("aiTutor")}</h3><p>${t("aiTutorDesc")}</p></span></button>`}
     </div>${tabbar("home")}`);
     const lk = $("[data-locked]"); if (lk) lk.onclick = () => toast(t("aiPlanned"));
-    if (kid) speak(tEn("homeHi", { name: p.name }));
+    if (kid) speakUi("homeHi", { name: p.name });
   }
 
   const translatedSection = (value) => tc(value) || value;
@@ -374,7 +454,7 @@
         ready(fn) { ft.innerHTML = `<button class="btn" id="chk" disabled>${t("check")}</button>`; ctx.check = fn; $("#chk", ft).onclick = () => ctx.result(ctx.check()); },
         enable(on = true) { const b = $("#chk", ft); if (b) b.disabled = !on; },
         cont(label = t("continue"), fn) { ft.className = "footer"; ft.innerHTML = `<button class="btn" id="cnt">${label}</button>`; $("#cnt", ft).onclick = fn || next; },
-        result({ ok, answer, explain }) {
+        result({ ok, answer, explain, speechAnswer }) {
           $$("button.opt, button.tile, input", act).forEach((b) => b.disabled = true);
           if (!(idx in st.first)) st.first[idx] = ok;
           const w = a.word === true ? a.answer : a.word;
@@ -385,8 +465,11 @@
           ft.className = `footer ${ok ? "good" : "wrong"}`;
           ft.innerHTML = `<div class="fb">${ok ? "✓ " + praise : "✗ " + t("notQuite")}${!ok && answer ? `<small>${t("correctAnswer")} <b dir="ltr">${esc(answer)}</b></small>` : ""}${explain && !ok ? `<small dir="auto">${esc(explain)}</small>${helperLine(explain)}` : ""}${!ok ? `<small class="muted">${t("retryEnd")}</small>` : ""}</div><button class="btn ${ok ? "ok" : "bad"}" id="cnt">${t("continue")}</button>`;
           $("#cnt", ft).onclick = next;
-          if (kid) speak(tEn(ok ? praiseKey : "greatAgain"));
-          else if (!ok && answer) speak(answer);
+          if (kid) speakUi(ok ? praiseKey : "greatAgain");
+          else if (!ok && answer) {
+            if (helpOn()) speakSeq([helpPart(t("correctAnswer")), { text: speechAnswer || answer, lang: "en" }, helpPart(tc(explain))].filter(Boolean));
+            else speak(answer);
+          }
         }
       };
       (R[a.type] || R.card)(a, act, ctx, kid);
@@ -428,7 +511,7 @@
         ${st.wrongWords.size && !preview ? `<p class="small muted">${t("practiceList")} ${[...st.wrongWords].map((w) => `<span dir="ltr">${esc(w)}</span>${gl(w) ? ` — <span dir="auto">${esc(gl(w))}</span>` : ""}`).join(", ")}</p>` : ""}
         <div style="width:100%;display:flex;flex-direction:column;gap:10px"><button class="btn" data-go="${backTo}">${t("continue")}</button><button class="btn ghost" id="again">${t("tryAgain")}</button></div></div>`);
       $("#again").onclick = () => lesson(lid, preview);
-      speak(tEn(kid ? stars === 1 ? "spokenStars" : "spokenStarsPlural" : "summaryTitle", { n: stars }));
+      speakUi(kid ? stars === 1 ? "spokenStars" : "spokenStarsPlural" : "summaryTitle", { n: stars });
     }
     show();
   }
@@ -488,7 +571,19 @@
         videoCleanup = () => { playing = false; token++; clearSceneTimers(); };
         paint();
         const words = scene.caption.split(/\s+/).length;
-        const estimate = (1200 + 420 * words) / speed;
+        const localized = helpOn();
+        const starts = []; let pos = 0;
+        scene.caption.split(" ").forEach((word) => { starts.push(pos); pos += word.length + 1; });
+        const onboundary = (event) => {
+          const k = starts.findIndex((start, i) => event.charIndex >= start && (i === starts.length - 1 || event.charIndex < starts[i + 1]));
+          $$("#vcap-en span", el).forEach((span) => span.classList.toggle("hl", +span.dataset.vword === k));
+        };
+        const audioParts = localized ? [
+          { text: scene.caption, lang: "en", rate: speed, boundary: true, onboundary },
+          helpPart(tc(scene.caption))
+        ].filter(Boolean) : null;
+        const spokenParts = localized ? audioParts.filter((part) => part.lang === "en" || voiceFor(part.lang)).length : 1;
+        const estimate = ((1200 + 420 * words) * Math.max(1, spokenParts)) / speed;
         let speechStarted = false;
         const useEstimate = () => {
           if (!playing || thisToken !== token || speechStarted) return;
@@ -496,22 +591,19 @@
         };
         if (!hasTTS) estimateTimer = setVideoTimer(() => advance(thisToken), estimate);
         else startupTimer = setVideoTimer(useEstimate, 1500);
-        const starts = []; let pos = 0;
-        scene.caption.split(" ").forEach((word) => { starts.push(pos); pos += word.length + 1; });
-        speak(scene.caption, {
-          rate: speed,
-          onstart: () => {
+        const onstart = () => {
             if (!playing || thisToken !== token) return;
             speechStarted = true;
             clearVideoTimer(startupTimer); startupTimer = null;
             clearVideoTimer(estimateTimer); estimateTimer = null;
             safetyTimer = setVideoTimer(() => { if (speechStarted) advance(thisToken); }, Math.max(4000, 2.5 * estimate));
-          },
-          onboundary: (event) => {
-            const k = starts.findIndex((start, i) => event.charIndex >= start && (i === starts.length - 1 || event.charIndex < starts[i + 1]));
-            $$("#vcap-en span", el).forEach((span) => span.classList.toggle("hl", +span.dataset.vword === k));
-          },
-          onend: () => advance(thisToken)
+        };
+        if (localized && hasTTS) speakSeq(audioParts, { rate: speed, onstart, onend: () => advance(thisToken) });
+        else speak(scene.caption, {
+          rate: speed,
+          onstart: hasTTS ? onstart : undefined,
+          onboundary,
+          onend: hasTTS ? () => advance(thisToken) : undefined
         });
       };
       const advance = (thisToken) => {
@@ -550,12 +642,17 @@
       input.oninput = () => ctx.enable(!!input.value.trim());
       input.onkeydown = (event) => { if (event.key === "Enter" && input.value.trim()) $("#chk").click(); };
       ctx.ready(() => ({ ok: Number(input.value.replace(/[,\s]/g, "")) === Number(a.answer), answer: a.unit ? `${Number(a.answer).toLocaleString("en-US")} ${a.unit}` : a.answer }));
+      if (helpOn()) speakAuto(a.prompt);
     },
     card(a, el, ctx) {
       el.innerHTML = `<div class="flash" dir="ltr">${a.big ? `<div class="big">${a.big}</div>` : ""}${a.emoji ? `<div class="emoji">${a.emoji}</div>` : ""}
         ${a.title ? `<h2>${esc(a.title)}</h2>${helperLine(a.title)}` : ""}${a.text ? `<div class="word">${esc(a.text)}</div>${/^[\p{L}\p{N}]+$/u.test(a.text) ? glossLabel(a.text) : helperLine(a.text)}` : ""}${a.lines ? `<div class="lines">${a.lines.map((l) => `<div>${l}</div>`).join("")}</div>` : ""}
         ${a.say ? speakBtns(a.say) : ""}</div>`;
-      if (a.say) speak(a.say);
+      if (helpOn()) {
+        const singleWord = a.text && /^[\p{L}\p{N}]+$/u.test(a.text);
+        const translation = singleWord ? gl(a.text) : tc(a.title) || tc(a.text);
+        speakSeq([a.say ? { text: a.say, lang: "en" } : null, helpPart(translation)].filter(Boolean));
+      } else if (a.say) speak(a.say);
       ctx.cont();
     },
     choice(a, el, ctx, kid) {
@@ -571,7 +668,8 @@
         const ok = sel === a.answer; $$(".opt", el)[a.answer].classList.add("good"); if (!ok) $$(".opt", el)[sel].classList.add("wrong");
         return { ok, answer: a.sentence || a.options[a.answer].t };
       });
-      if (a.listen || kid || a.word) speak(a.say || a.prompt);
+      if (helpOn()) speakAuto(a.prompt, a.listen || kid || a.word ? a.say || a.prompt : null);
+      else if (a.listen || kid || a.word) speak(a.say || a.prompt);
     },
     truefalse(a, el, ctx) {
       let sel = null;
@@ -580,8 +678,9 @@
       $$(".opt", el).forEach((b) => b.onclick = () => { sel = b.dataset.v === "1"; $$(".opt", el).forEach((x) => x.classList.toggle("sel", x === b)); ctx.enable(); });
       ctx.ready(() => {
         const ok = sel === a.answer; $$(".opt", el)[a.answer ? 0 : 1].classList.add("good"); if (!ok) $$(".opt", el)[sel ? 0 : 1].classList.add("wrong");
-        return { ok, answer: a.answer ? t("true") : t("false"), explain: a.explain };
+        return { ok, answer: a.answer ? t("true") : t("false"), speechAnswer: a.answer ? tEn("true") : tEn("false"), explain: a.explain };
       });
+      if (helpOn()) speakAuto(a.prompt);
     },
     match(a, el, ctx, kid) {
       const L = shuffle(a.pairs.map((p) => p[0])), Rr = shuffle(a.pairs.map((p) => p[1]));
@@ -600,7 +699,8 @@
         if (done === a.pairs.length) ctx.result({ ok: mistakes === 0, answer: mistakes ? a.pairs.map((p) => `${p[0]} → ${p[1]}`).join(", ") : "" });
       });
       function ft(c) { $("#ft").innerHTML = `<p class="small muted" style="text-align:center;margin:0">${t("tapPair")}</p>`; }
-      if (kid && a.say) speak(a.say);
+      if (helpOn()) speakAuto(a.prompt, kid && a.say ? a.say : null);
+      else if (kid && a.say) speak(a.say);
     },
     missing(a, el, ctx) {
       let sel = null;
@@ -609,7 +709,7 @@
         <div class="wordview ${a.word.length > 6 ? "long" : ""}" id="wv" dir="ltr">${draw()}</div><div class="tiles" dir="ltr">${a.choices.map((c) => `<button class="tile" data-c="${c}" dir="ltr">${c}</button>`).join("")}</div>`;
       $$(".tile", el).forEach((b) => b.onclick = () => { sel = b.dataset.c; $("#wv", el).innerHTML = draw(); $$(".tile", el).forEach((x) => x.classList.toggle("sel", x === b)); ctx.enable(); });
       ctx.ready(() => ({ ok: sel === a.word[a.hide], answer: a.word }));
-      speak(a.say);
+      speakAuto(a.prompt, a.say);
     },
     build(a, el, ctx) {
       const letters = shuffle(a.word.split("")).map((c, i) => ({ c, i }));
@@ -624,7 +724,9 @@
         ctx.enable(built.length === a.word.length);
       };
       ctx.ready(() => ({ ok: built.map((t) => t.c).join("").toLowerCase() === a.word.toLowerCase(), answer: a.word }));
-      draw(); speak(a.say || a.word);
+      draw();
+      if (helpOn()) speakAuto(a.prompt, a.say || a.word);
+      else speak(a.say || a.word);
     },
     order(a, el, ctx) {
       const words = shuffle(a.words).map((w, i) => ({ w, i }));
@@ -639,6 +741,7 @@
       };
       ctx.ready(() => ({ ok: line.map((t) => t.w).join(" ") === a.words.join(" "), answer: a.words.join(" ") }));
       draw();
+      if (helpOn()) speakAuto(a.prompt);
     },
     dictation(a, el, ctx) {
       el.innerHTML = `${promptMarkup(a.prompt)}${speakBtns(a.say, true)}
@@ -648,7 +751,7 @@
       inp.oninput = () => ctx.enable(!!inp.value.trim());
       inp.onkeydown = (e) => { if (e.key === "Enter" && inp.value.trim()) $("#chk").click(); };
       ctx.ready(() => ({ ok: norm(inp.value) === norm(a.answer), answer: a.answer }));
-      speak(a.say);
+      speakAuto(a.prompt, a.say);
     },
     story(a, el, ctx) {
       let pg = 0;
@@ -660,9 +763,15 @@
           <div class="dots">${a.pages.map((_, i) => `<i class="${i === pg ? "on" : ""}"></i>`).join("")}</div>
           <div class="speakrow"><button class="speak" id="read">🔊 ${t("readToMe")}</button></div>`;
         const starts = []; let pos = 0; words.forEach((w) => { starts.push(pos); pos += w.length + 1; });
-        const read = () => speak(page.text, { rate: 0.8,
-          onboundary: (e) => { let k = starts.findIndex((s, i) => e.charIndex >= s && (i === starts.length - 1 || e.charIndex < starts[i + 1])); $$("#tx span", el).forEach((s) => s.classList.toggle("hl", +s.dataset.w === k)); },
-          onend: () => $$("#tx span", el).forEach((s) => s.classList.remove("hl")) });
+        const onboundary = (e) => { let k = starts.findIndex((s, i) => e.charIndex >= s && (i === starts.length - 1 || e.charIndex < starts[i + 1])); $$("#tx span", el).forEach((s) => s.classList.toggle("hl", +s.dataset.w === k)); };
+        const clearHighlight = () => $$("#tx span", el).forEach((s) => s.classList.remove("hl"));
+        const read = () => {
+          if (helpOn()) speakSeq([
+            { text: page.text, lang: "en", rate: 0.8, boundary: true, onboundary, onend: clearHighlight },
+            helpPart(tc(page.text))
+          ].filter(Boolean), { rate: 0.8 });
+          else speak(page.text, { rate: 0.8, onboundary, onend: clearHighlight });
+        };
         $("#read", el).onclick = read; read();
         const last = pg === a.pages.length - 1;
         ctx.cont(last ? t("continue") : t("nextPage"), last ? undefined : () => { pg++; draw(); });
@@ -729,6 +838,7 @@
         const acc = Object.values(pr.skills).reduce((a, s) => [a[0] + s.c, a[1] + s.t], [0, 0]);
         return `<div class="card"><div style="display:flex;gap:12px;align-items:center"><span class="avatar lg" style="width:56px;height:56px;font-size:2rem">${k.avatar}</span><div style="flex:1"><b>${esc(k.name)}</b><div class="small muted">${t("age")} ${k.ageBand} · ${t("lastActive", { date: last ? new Date(last.at).toLocaleDateString() : t("never") })}</div></div></div>
           <div class="field parent-language"><label>${t("language")}</label><select data-kid-lang="${k.id}">${window.LEXORA_I18N.langs.map((l) => `<option value="${l.code}" ${l.code === (k.lang || "en") ? "selected" : ""}>${l.name}</option>`).join("")}</select></div>
+          ${(k.lang || "en") !== "en" ? `<label class="check voice-help-option"><input type="checkbox" data-kid-voice="${k.id}" ${k.voiceHelp !== false ? "checked" : ""}> ${t("voiceInMyLang")}</label>` : ""}
           <div class="statgrid" style="margin-top:12px"><div class="stat"><b>${doneCount(pr)}</b><span>${t("lessonsDone")}</span></div><div class="stat"><b>${Math.round(pr.seconds / 60)}</b><span>${t("minutes")}</span></div><div class="stat"><b>${acc[1] ? Math.round((acc[0] / acc[1]) * 100) + "%" : "–"}</b><span>${t("accuracy")}</span></div></div>
           ${pr.review.length ? `<p class="small" style="margin-top:10px">${t("needsPractice")} <b>${pr.review.map(esc).join(", ")}</b></p>` : ""}
           ${pr.log.length ? `<p class="small muted" style="margin:8px 0 0">${t("recent")} ${pr.log.slice(0, 3).map((l) => `${esc(l.title)} (${l.pct}%)`).join(" · ")}</p>` : ""}
@@ -745,6 +855,10 @@
       const child = S.profiles.find((profile) => profile.id === select.dataset.kidLang);
       child.lang = select.value; save(); parentArea();
     });
+    $$("[data-kid-voice]").forEach((checkbox) => checkbox.onchange = () => {
+      const child = S.profiles.find((profile) => profile.id === checkbox.dataset.kidVoice);
+      child.voiceHelp = checkbox.checked; save();
+    });
     $("#exp").onclick = exportData; $("#del").onclick = deleteAll;
   }
 
@@ -753,12 +867,15 @@
     render(`${banner()}<div class="screen"><button class="back" data-go="#/profiles">‹ ${t("profiles")}</button><h2>${t("settings")}</h2>
       <div class="card"><b>${esc(p ? p.name : "")}</b><div class="small muted">${esc(p && p.level || "")}</div></div>
       <div class="field"><label>${t("language")}</label>${langSelect("settings-lang", p && p.lang || S.lang || "en")}</div>
+      ${p && (p.lang || S.lang || "en") !== "en" ? `<label class="check voice-help-option"><input type="checkbox" id="voice-help" ${p.voiceHelp !== false ? "checked" : ""}> ${t("voiceInMyLang")}</label>` : ""}
       <button class="btn secondary" data-go="#/placement">${t("retakeQuiz")}</button>
       <button class="btn secondary" id="exp">${t("downloadData")}</button><button class="btn bad" id="del">${t("deleteData")}</button></div>`);
     $("#settings-lang").onchange = () => {
       if (p) p.lang = $("#settings-lang").value; else S.lang = $("#settings-lang").value;
       save(); router();
     };
+    const voiceHelp = $("#voice-help");
+    if (voiceHelp) voiceHelp.onchange = () => { p.voiceHelp = voiceHelp.checked; save(); };
     $("#exp").onclick = exportData; $("#del").onclick = deleteAll;
   }
 
