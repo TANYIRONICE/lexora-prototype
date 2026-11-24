@@ -59,6 +59,7 @@ p{margin:0 0 .8em;line-height:1.45}
 .seg{display:flex;gap:8px}
 .seg button{flex:1;border:2px solid var(--border);background:#fff;border-radius:10px;padding:10px;font-weight:700}
 .seg button.on{border-color:var(--brand);background:#E8EEF6;color:var(--brand)}
+.class-segment{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}
 /* Lesson player */
 .player-top{display:flex;align-items:center;gap:12px;padding:14px 16px}
 .x{border:0;background:none;font-size:1.6rem;color:var(--muted);padding:0 4px}

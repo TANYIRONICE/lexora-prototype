@@ -14,7 +14,7 @@ async def shot(page, name):
     SHOTS.append(str(path))
 
 async def assert_no_french_no_voice_toast(page, screen):
-    message = await page.evaluate("window.LEXORA_I18N.strings.noVoice.fr.replace('{lang}', 'Français')")
+    message = await page.evaluate("window.LEXORA_I18N.strings.noVoiceHelp.fr.replace('{lang}', 'Français')")
     toast = page.locator(".toast:visible", has_text=message)
     assert await toast.count() == 0, f"Unexpected French no-voice toast on {screen}"
 
@@ -157,6 +157,29 @@ async def mocked_voice_page(browser, lang, voices=None, voice_help=True, errors=
     return context, page
 
 
+async def seeded_page(browser, profile, errors=None, parent=None, progress=None):
+    context = await browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=1)
+    await context.add_init_script(VOICE_STUB.replace("__VOICE_LANGS__", json.dumps(VOICE_LANGS)))
+    page = await context.new_page()
+    if errors is not None:
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        page.on("console", lambda message: errors.append(message.text) if message.type == "error" else None)
+    page.on("dialog", lambda dialog: asyncio.ensure_future(dialog.accept()))
+    await page.goto(BASE)
+    state = {
+        "parent": parent,
+        "profiles": [profile],
+        "activeId": profile["id"],
+        "progress": progress or {},
+        "lang": profile.get("lang", "en")
+    }
+    await page.evaluate("(state) => localStorage.setItem('lexora_proto_v1', JSON.stringify(state))", state)
+    await page.reload()
+    await page.goto(BASE + "#/home")
+    await page.wait_for_timeout(100)
+    return context, page
+
+
 async def seek_k1_prompt(page, prompt):
     await page.goto(BASE + "#/preview/k1")
     await page.wait_for_timeout(50)
@@ -285,14 +308,15 @@ async def mocked_voice_tests(browser, errors):
     await context.close()
 
 
-async def play(page, tag, maxsteps=120):
+async def play(page, tag, maxsteps=120, capture_summary=True):
     video_shot_done = False
     help_shot_done = False
     number_shot_done = False
     for step in range(maxsteps):
         await page.wait_for_timeout(80)
         if await page.locator(".summary").count():
-            await shot(page, f"{tag}-summary.png")
+            if capture_summary:
+                await shot(page, f"{tag}-summary.png")
             return True
 
         if await page.locator(".video-stage").count():
@@ -370,6 +394,143 @@ async def play(page, tag, maxsteps=120):
     return False
 
 
+async def curriculum_flow_tests(browser, errors):
+    parent_profile = {
+        "id": "curriculum-parent", "name": "Parent", "avatar": "🧑🏾‍🦱",
+        "type": "learner", "isParent": True, "level": "Beginner A1", "lang": "en"
+    }
+    parent = {
+        "name": "Parent", "contact": "parent@example.com",
+        "consentAt": "2026-01-01T00:00:00.000Z", "policyVersion": "0.1-demo"
+    }
+    context, page = await seeded_page(browser, parent_profile, errors, parent=parent)
+    await page.evaluate("sessionStorage.setItem('gate', Date.now())")
+    await page.goto(BASE + "#/parent")
+    await page.locator("[data-go='#/addchild']").click()
+    await page.locator("[data-system='franco']").click()
+    assert await page.locator("#child-lang").input_value() == "fr"
+    await shot(page, "curriculum-add-child-franco.png")
+    await page.locator("[data-system='anglo']").click()
+    await page.locator("[data-cls='3']").click()
+    await page.fill("#nm", "Ama")
+    await page.select_option("#child-lang", "en")
+    await page.locator("#go").click()
+    created = await page.evaluate("""() => JSON.parse(localStorage.getItem('lexora_proto_v1')).profiles.find(profile => profile.name === 'Ama')""")
+    assert created["system"] == "anglo" and created["cls"] == 3 and "ageBand" not in created, created
+    await page.locator(".profile", has_text="Ama").click()
+    await page.wait_for_selector(".curriculum-card")
+    titles = await page.locator(".curriculum-card h3").all_text_contents()
+    assert len(titles) == 5 and {
+        "English Language", "Mathematics", "Science & Technology", "Social Studies", "French"
+    } == set(titles), titles
+    assert await page.locator(".section-card", has_text="Spelling Studio").count() == 1
+    await shot(page, "curriculum-anglo-home.png")
+    await page.goto(BASE + "#/subject/math")
+    assert await page.locator("#subject-class").input_value() == "3"
+    assert await page.locator("#subject-class optgroup").get_attribute("label") == "Other classes"
+    await shot(page, "curriculum-subject-class.png")
+    await page.locator("[data-lid='am4']").click()
+    assert await play(page, "curriculum-am4", maxsteps=100, capture_summary=False)
+    await page.goto(BASE + "#/home")
+    stars = await page.locator(".curriculum-card").filter(has_text="Mathematics").locator(".stars").evaluate(
+        "(el) => el.textContent.length - (el.querySelector('.off')?.textContent.length || 0)"
+    )
+    assert stars > 0, f"Expected Maths stars after completing am4, found {stars}"
+    await page.evaluate("sessionStorage.setItem('gate', Date.now())")
+    await page.goto(BASE + "#/parent")
+    await page.locator("[data-kid-system]").select_option("franco")
+    assert await page.locator("[data-kid-class] option").first.inner_text() == "SIL"
+    await page.locator("[data-kid-system]").select_option("anglo")
+    assert await page.locator("[data-kid-class] option").first.inner_text() == "Class 1"
+    await page.locator("[data-kid-class]").select_option("3")
+    await page.goto(BASE + "#/preview/aso1")
+    await page.wait_for_selector("#act")
+    await shot(page, "curriculum-anglo-social-studies-lesson.png")
+    await context.close()
+
+    franco_profile = {
+        "id": "curriculum-franco", "name": "Ama", "avatar": "🦊", "type": "child",
+        "system": "franco", "cls": 3, "lang": "fr", "voiceHelp": True
+    }
+    context, page = await seeded_page(browser, franco_profile, errors)
+    titles = await page.locator(".curriculum-card h3").all_text_contents()
+    assert {"Français", "Mathématiques", "Sciences et technologie", "Sciences humaines et sociales", "Anglais (English)"} == set(titles), titles
+    await shot(page, "curriculum-franco-home.png")
+    await page.goto(BASE + "#/subject/math")
+    assert await page.locator("#subject-class").input_value() == "3"
+    await page.evaluate("window.__spoken = []")
+    await page.locator("[data-lid='fm4']").click()
+    await page.wait_for_selector("#cnt")
+    await page.wait_for_timeout(100)
+    spoken_franco = await page.evaluate("window.__spoken")
+    assert spoken_franco and all(item["lang"].lower().startswith("fr") for item in spoken_franco), spoken_franco
+    assert not any(item["lang"].lower().startswith("en") for item in spoken_franco), spoken_franco
+    print("CURRICULUM FLOW B AUDIO:", spoken_franco)
+    await shot(page, "curriculum-franco-lesson.png")
+
+    await page.goto(BASE + "#/subject/ang")
+    await page.evaluate("window.__spoken = []")
+    await page.locator("[data-lid='fa4']").click()
+    await page.wait_for_selector("#cnt")
+    await page.locator("#cnt").click()
+    await page.wait_for_selector("#act .prompt")
+    prompt = await page.locator("#act .prompt").inner_text()
+    await page.wait_for_timeout(100)
+    await page.locator(".opt", has_text="brother").click()
+    await page.wait_for_timeout(100)
+    spoken_english = await page.evaluate("window.__spoken")
+    assert any(item["text"] == prompt and item["lang"].lower().startswith("fr") for item in spoken_english), spoken_english
+    assert any(item["text"] == "brother" and item["lang"].lower().startswith("en") for item in spoken_english), spoken_english
+    print("CURRICULUM FLOW C AUDIO:", spoken_english)
+    await context.close()
+
+    legacy_profile = {
+        "id": "legacy-child", "name": "Legacy", "avatar": "🦊", "type": "child",
+        "ageBand": "8–10", "lang": "en", "voiceHelp": True
+    }
+    legacy_progress = {"legacy-child": {
+        "lessons": {"k1": {"best": 100, "stars": 3, "attempts": 1}},
+        "skills": {}, "words": [], "review": [], "streak": {"last": None, "count": 0},
+        "badges": [], "seconds": 0, "log": []
+    }}
+    context, page = await seeded_page(browser, legacy_profile, errors, progress=legacy_progress)
+    migrated = await page.evaluate("JSON.parse(localStorage.getItem('lexora_proto_v1'))")
+    child = migrated["profiles"][0]
+    assert child.get("system") == "anglo" and child.get("cls") == 2, child
+    assert migrated["progress"]["legacy-child"]["lessons"]["k1"]["stars"] == 3, migrated["progress"]
+    assert await page.locator(".screen").inner_text() and "Class 3 · Anglophone" in await page.locator(".screen").inner_text()
+    await page.goto(BASE + "#/subject/eng")
+    await page.select_option("#subject-class", "0")
+    await page.wait_for_selector("[data-lid='k1']")
+    assert await page.locator("[data-lid='k1']").get_attribute("data-open") == "1"
+    assert await page.locator("[data-lid='k1'] .stars").count() == 1
+    migrated = await page.evaluate("JSON.parse(localStorage.getItem('lexora_proto_v1'))")
+    assert migrated["progress"]["legacy-child"]["lessons"]["k1"]["stars"] == 3
+    await context.close()
+
+    learner_profile = {
+        "id": "learner-check", "name": "Learner", "avatar": "🧑🏾‍🦱", "type": "learner",
+        "level": "Beginner A1", "lang": "en"
+    }
+    context, page = await seeded_page(browser, learner_profile, errors)
+    section_titles = await page.locator(".section-card h3").all_text_contents()
+    assert {"English Academy", "Spelling Studio", "Maths"}.issubset(set(section_titles)), section_titles
+    await context.close()
+
+    preview_profile = {
+        "id": "curriculum-preview", "name": "Preview", "avatar": "🦊", "type": "child",
+        "system": "anglo", "cls": 0, "lang": "en", "voiceHelp": True
+    }
+    context, page = await seeded_page(browser, preview_profile, errors)
+    lesson_ids = await page.evaluate("Object.keys(window.LEXORA_CONTENT.lessons)")
+    for lesson_id in lesson_ids:
+        await page.goto(BASE + f"#/preview/{lesson_id}")
+        await page.wait_for_selector("#act")
+        assert await play(page, f"preview-{lesson_id}", maxsteps=100, capture_summary=False), lesson_id
+    print("PREVIEWED LESSONS:", len(lesson_ids))
+    await context.close()
+
+
 async def main():
     OUT.mkdir(exist_ok=True)
     async with async_playwright() as p:
@@ -419,7 +580,7 @@ async def main():
         await assert_no_french_no_voice_toast(page, "French home")
         await shot(page, "21-home-fr.png")
 
-        await page.locator("[data-go='#/section/kids']").click()
+        await page.goto(BASE + "#/subject/eng")
         await page.locator("[data-lid='k1']").click()
         assert await play(page, "k1")
         await page.locator(".summary [data-go]").click()
@@ -430,7 +591,7 @@ async def main():
         assert await play(page, "k3")
         await page.locator(".summary [data-go]").click()
 
-        await page.goto(BASE + "#/section/maths")
+        await page.goto(BASE + "#/subject/math")
         await page.locator("[data-lid='m1']").click()
         assert await play(page, "m1")
         await page.locator(".summary [data-go]").click()
@@ -486,9 +647,11 @@ async def main():
 
         content_errors = await page.evaluate("""() => {
           const content = window.LEXORA_CONTENT, errors = [];
+          const validTypes = new Set(['video', 'card', 'choice', 'truefalse', 'match', 'missing', 'build', 'order', 'dictation', 'story', 'number']);
           Object.entries(content.lessons).forEach(([lessonId, lesson]) => {
             lesson.activities.forEach((activity, index) => {
               const where = `${lessonId} activity ${index + 1}`;
+              if (!validTypes.has(activity.type)) errors.push(`${where}: unknown activity type ${activity.type}`);
               if (activity.type === 'choice' &&
                   (!Number.isInteger(activity.answer) || activity.answer < 0 || activity.answer >= (activity.options || []).length)) {
                 errors.push(`${where}: choice answer is not a valid option index`);
@@ -518,6 +681,35 @@ async def main():
             if (!content.lessons[lessonId]) errors.push(`${section.id}: unit references missing lesson ${lessonId}`);
             references[lessonId] = (references[lessonId] || 0) + 1;
           })));
+          content.curriculum.systems.forEach(system => {
+            (content.curriculum.subjects[system.id] || []).forEach(subject => {
+              const cells = content.curriculum.plan[system.id]?.[subject.id];
+              if (!Array.isArray(cells) || cells.length !== system.classes.length) {
+                errors.push(`${system.id}/${subject.id}: expected ${system.classes.length} class cells`);
+                return;
+              }
+              cells.forEach((ids, classIndex) => {
+                if (!Array.isArray(ids) || ids.length === 0) errors.push(`${system.id}/${subject.id}/${classIndex}: empty lesson cell`);
+                (ids || []).forEach(lessonId => {
+                  if (!content.lessons[lessonId]) errors.push(`${system.id}/${subject.id}/${classIndex}: missing lesson ${lessonId}`);
+                  else {
+                    const lesson = content.lessons[lessonId];
+                    const expectedLang = system.id === 'anglo' && subject.id === 'fre' ? 'fr' :
+                      system.id === 'franco' && subject.id !== 'ang' ? 'fr' : 'en';
+                    const expectedPromptLang = system.id === 'anglo' && subject.id === 'fre' ? 'en' :
+                      system.id === 'franco' && subject.id === 'ang' ? 'fr' : expectedLang;
+                    if ((lesson.lang || 'en') !== expectedLang) {
+                      errors.push(`${lessonId}: expected content language ${expectedLang}, got ${lesson.lang || 'en'}`);
+                    }
+                    if ((lesson.promptLang || lesson.lang || 'en') !== expectedPromptLang) {
+                      errors.push(`${lessonId}: expected prompt language ${expectedPromptLang}, got ${lesson.promptLang || lesson.lang || 'en'}`);
+                    }
+                  }
+                  references[lessonId] = (references[lessonId] || 0) + 1;
+                });
+              });
+            });
+          });
           Object.keys(content.lessons).forEach(lessonId => {
             if (references[lessonId] !== 1) errors.push(`${lessonId}: referenced by ${references[lessonId] || 0} units`);
           });
@@ -530,33 +722,45 @@ async def main():
           const content = window.LEXORA_CONTENT, i18n = window.LEXORA_I18N;
           const codes = ['en', 'fr', 'es', 'pt', 'ar'];
           const newLessonIds = new Set(['k4', 'k5', 'k6', 'a3', 'a4', 'a5', 's3', 's4', 'm4', 'm5', 'm6']);
+          const curriculumLessonIds = new Set(Object.values(content.curriculum.plan)
+            .flatMap(subjects => Object.values(subjects).flatMap(classes => classes.flat())));
+          const coveredContentIds = new Set([...newLessonIds, ...curriculumLessonIds]);
           const missingStrings = Object.entries(i18n.strings)
             .filter(([, values]) => codes.some(code => !values[code]))
             .map(([key]) => key);
           const required = new Set();
           const missingGloss = [];
+          const addEnglish = (text, language) => {
+            if (typeof text === 'string' && /\p{L}/u.test(text) && language === 'en') required.add(text);
+          };
           content.sections.forEach(section => {
             required.add(section.title); required.add(section.desc);
             section.units.forEach(unit => required.add(unit.title));
           });
           Object.entries(content.lessons).forEach(([lessonId, lesson]) => {
-            required.add(lesson.title);
+            const targetLang = lesson.lang || 'en';
+            const promptLang = lesson.promptLang || targetLang;
+            addEnglish(lesson.title, targetLang);
             lesson.activities.forEach(activity => {
-              if (activity.prompt) required.add(activity.prompt);
-              if (activity.explain) required.add(activity.explain);
-              if (activity.title) required.add(activity.title);
-              if (newLessonIds.has(lessonId) && activity.text) required.add(activity.text);
-              if (newLessonIds.has(lessonId)) (activity.lines || []).forEach(line => required.add(line));
-              (activity.pages || []).forEach(page => required.add(page.text));
-              (activity.scenes || []).forEach(scene => required.add(scene.caption));
+              addEnglish(activity.prompt, promptLang);
+              addEnglish(activity.explain, promptLang);
+              addEnglish(activity.title, targetLang);
+              if (coveredContentIds.has(lessonId)) {
+                addEnglish(activity.text, targetLang);
+                (activity.lines || []).forEach(line => addEnglish(line, targetLang));
+              }
+              (activity.pages || []).forEach(page => addEnglish(page.text, targetLang));
+              (activity.scenes || []).forEach(scene => addEnglish(scene.caption, targetLang));
             });
-            (lesson.words || []).forEach(word => {
+            if (targetLang === 'en') (lesson.words || []).forEach(word => {
               if (!i18n.gloss[word]) missingGloss.push(word);
             });
-            lesson.activities.filter(activity => activity.type === 'card' && /^[\\p{L}\\p{N}]+$/u.test(activity.text || ''))
-              .forEach(activity => { if (!i18n.gloss[activity.text]) missingGloss.push(activity.text); });
+            if (targetLang === 'en' && coveredContentIds.has(lessonId)) {
+              lesson.activities.filter(activity => activity.type === 'card' && /^[\\p{L}\\p{N}]+$/u.test(activity.text || ''))
+                .forEach(activity => { if (!i18n.gloss[activity.text]) missingGloss.push(activity.text); });
+            }
           });
-          content.placement.forEach(question => required.add(question.prompt));
+          content.placement.forEach(question => addEnglish(question.prompt, 'en'));
           const missingTranslations = [...required].filter(text =>
             !i18n.tr[text] || ['fr', 'es', 'pt', 'ar'].some(code => !i18n.tr[text][code])
           );
@@ -569,6 +773,7 @@ async def main():
         assert not coverage["missingTranslations"], coverage["missingTranslations"]
         assert not coverage["missingGloss"], coverage["missingGloss"]
         await mocked_voice_tests(browser, errors)
+        await curriculum_flow_tests(browser, errors)
         print("SCREENSHOTS:", SHOTS)
         print("ERRORS:", errors)
         assert not errors, errors

@@ -26,7 +26,25 @@
     const deviceLang = (navigator.language || "en").slice(0, 2).toLowerCase();
     return { parent: null, profiles: [], activeId: null, progress: {}, lang: window.LEXORA_I18N.langs.some((l) => l.code === deviceLang) ? deviceLang : "en" };
   }
-  function load() { try { return JSON.parse(localStorage.getItem(KEY)) || fresh(); } catch { return fresh(); } }
+  function load() {
+    try {
+      const state = JSON.parse(localStorage.getItem(KEY)) || fresh();
+      let migrated = false;
+      state.profiles.forEach((profile) => {
+        if (profile.type !== "child") return;
+        if (!profile.system) {
+          profile.system = "anglo";
+          profile.cls = ({ "5–7": 0, "8–10": 2, "11–12": 4 })[profile.ageBand] ?? 0;
+          migrated = true;
+        } else if (!Number.isInteger(profile.cls)) {
+          profile.cls = 0;
+          migrated = true;
+        }
+      });
+      if (migrated) localStorage.setItem(KEY, JSON.stringify(state));
+      return state;
+    } catch { return fresh(); }
+  }
   function save() { localStorage.setItem(KEY, JSON.stringify(S)); }
   const active = () => S.profiles.find((p) => p.id === S.activeId);
   const langInfo = (code) => window.LEXORA_I18N.langs.find((l) => l.code === code) || window.LEXORA_I18N.langs[0];
@@ -45,10 +63,12 @@
   const gl = (word) => curLang() === "en" ? "" : ((window.LEXORA_I18N.gloss[word.toLowerCase()] || {})[curLang()] || "");
   const helpOn = () => curLang() !== "en" && active()?.voiceHelp !== false;
   const helpPart = (text) => helpOn() && text ? { text, lang: curLang() } : null;
-  function speakAuto(prompt, englishText) {
+  function speakAuto(prompt, targetText, ctx = {}, targetLang = ctx.lang || "en") {
+    const promptLang = ctx.promptLang || "en";
     if (helpOn()) {
-      speakSeq([helpPart(tc(prompt)), englishText ? { text: englishText, lang: "en" } : null].filter(Boolean));
-    } else if (englishText) speak(englishText);
+      const promptPart = promptLang === "en" ? helpPart(tc(prompt)) : { text: prompt, lang: promptLang };
+      speakSeq([promptPart, targetText ? { text: targetText, lang: targetLang } : null].filter(Boolean));
+    } else if (targetText) speak(targetText, { lang: targetLang });
   }
   function speakUi(key, vars = {}) {
     const lang = curLang();
@@ -136,10 +156,12 @@
     (parts || []).forEach((part) => {
       if (!part || !part.text) return;
       const lang = part.lang || "en";
-      const selectedVoice = lang === "en" ? voice : voiceFor(lang);
+      let selectedVoice = lang === "en" ? voice : voiceFor(lang);
       if (lang !== "en" && !selectedVoice) {
-        if (part.explicit) toast(t("noVoice", { lang: langInfo(lang).name }));
-        else noteMissingHelpVoice(lang);
+        if (part.explicit) { toast(t("noVoice", { lang: langInfo(lang).name })); return; }
+        noteMissingHelpVoice(lang);
+        selectedVoice = voice;
+        queued.push({ part, lang: "en", voice: selectedVoice });
         return;
       }
       queued.push({ part, lang, voice: selectedVoice });
@@ -176,7 +198,7 @@
     const lang = opts.lang || "en";
     speakSeq([{
       text, lang, rate: opts.rate, boundary: !!opts.onboundary,
-      onboundary: opts.onboundary, explicit: !!opts.lang && lang !== "en"
+      onboundary: opts.onboundary, explicit: !!opts.explicit && lang !== "en"
     }], opts);
   }
   const videoTimers = new Set();
@@ -201,13 +223,13 @@
     speechSequenceId++;
     if (hasTTS) speechSynthesis.cancel();
   };
-  const speakBtns = (text, big) => `<div class="speakrow"><button class="speak ${big ? "big" : ""}" data-say="${esc(text)}" aria-label="Play audio">🔊${big ? "" : ` ${t("listen")}`}</button><button class="speak slow" data-say="${esc(text)}" data-rate="0.55" aria-label="Play slowly">🐢 ${t("slow")}</button></div>`;
+  const speakBtns = (text, big, lang = "en") => `<div class="speakrow"><button class="speak ${big ? "big" : ""}" data-say="${esc(text)}" data-say-lang-code="${esc(lang)}" aria-label="Play audio">🔊${big ? "" : ` ${t("listen")}`}</button><button class="speak slow" data-say="${esc(text)}" data-say-lang-code="${esc(lang)}" data-rate="0.55" aria-label="Play slowly">🐢 ${t("slow")}</button></div>`;
 
   app.addEventListener("click", (e) => {
     const s = e.target.closest("[data-say]");
-    if (s) { speak(s.dataset.say, { rate: +s.dataset.rate || 0.9 }); return; }
+    if (s) { speak(s.dataset.say, { rate: +s.dataset.rate || 0.9, lang: s.dataset.sayLangCode || "en" }); return; }
     const translated = e.target.closest("[data-say-lang]");
-    if (translated) { speak(translated.dataset.sayLang, { lang: curLang() }); return; }
+    if (translated) { speak(translated.dataset.sayLang, { lang: curLang(), explicit: true }); return; }
     if (e.target.closest("[data-lang-open]")) { languageSheet(e.target.closest("[data-lang-open]").dataset.langScope); return; }
     const choice = e.target.closest("[data-lang-choice]");
     if (choice) {
@@ -325,27 +347,43 @@
   }
 
   function addChild() {
-    let av = AVATARS[0], band = "5–7";
-    render(`${banner()}<div class="screen"><button class="back" data-go="#/profiles">${t("back")}</button>
-      <h2>${t("addChild")}</h2><p class="muted">${t("childPrivacy")}</p>
-      <div class="field"><label for="nm">${t("nickname")}</label><input id="nm" maxlength="14" placeholder="e.g. Ama"></div>
-      <div class="field"><label>${t("avatar")}</label><div class="avatars">${AVATARS.map((a, i) => `<button data-a="${a}" class="${i ? "" : "on"}" aria-label="avatar ${a}">${a}</button>`).join("")}</div></div>
-      <div class="field"><label>${t("age")}</label><div class="seg">${["5–7", "8–10", "11–12"].map((b, i) => `<button data-b="${b}" class="${i ? "" : "on"}">${b}</button>`).join("")}</div></div>
-      <div class="field"><label>${t("language")}</label>${langSelect("child-lang", S.lang || "en")}</div>
-      <button class="btn" id="go" disabled>${t("add")}</button></div>`);
-    $("#nm").oninput = () => { $("#go").disabled = !$("#nm").value.trim(); };
-    $$("[data-a]").forEach((b) => b.onclick = () => { av = b.dataset.a; $$("[data-a]").forEach((x) => x.classList.toggle("on", x === b)); });
-    $$("[data-b]").forEach((b) => b.onclick = () => { band = b.dataset.b; $$("[data-b]").forEach((x) => x.classList.toggle("on", x === b)); });
-    $("#go").onclick = () => {
-      const p = { id: uid(), name: $("#nm").value.trim(), avatar: av, type: "child", ageBand: band, lang: $("#child-lang").value, voiceHelp: true };
-      S.profiles.push(p); save(); toast(t("toastAdded", { name: p.name })); go("#/profiles");
+    let av = AVATARS[0], system = "anglo", cls = 0, lang = S.lang || "en", name = "";
+    const draw = () => {
+      const classes = C.curriculum.systems.find((item) => item.id === system).classes;
+      render(`${banner()}<div class="screen"><button class="back" data-go="#/profiles">${t("back")}</button>
+        <h2>${t("addChild")}</h2><p class="muted">${t("childPrivacy")}</p>
+        <div class="field"><label for="nm">${t("nickname")}</label><input id="nm" maxlength="14" placeholder="e.g. Ama" value="${esc(name)}"></div>
+        <div class="field"><label>${t("avatar")}</label><div class="avatars">${AVATARS.map((a, i) => `<button data-a="${a}" class="${a === av ? "on" : ""}" aria-label="avatar ${a}">${a}</button>`).join("")}</div></div>
+        <div class="field"><label>${t("schoolSystem")}</label><div class="seg">${C.curriculum.systems.map((item) => `<button data-system="${item.id}" class="${system === item.id ? "on" : ""}">${t(item.id === "anglo" ? "anglophone" : "francophone")}</button>`).join("")}</div></div>
+        <div class="field"><label>${t("class")}</label><div class="seg class-segment">${classes.map((name, i) => `<button data-cls="${i}" class="${cls === i ? "on" : ""}">${esc(classLabel(system, i))}</button>`).join("")}</div></div>
+        <div class="field"><label>${t("language")}</label>${langSelect("child-lang", lang)}</div>
+        <button class="btn" id="go" ${name.trim() ? "" : "disabled"}>${t("add")}</button></div>`);
+      $("#nm").oninput = () => { name = $("#nm").value; $("#go").disabled = !name.trim(); };
+      $("#child-lang").onchange = () => { lang = $("#child-lang").value; };
+      $$("[data-a]").forEach((b) => b.onclick = () => { av = b.dataset.a; draw(); });
+      $$("[data-system]").forEach((b) => b.onclick = () => {
+        system = b.dataset.system; cls = 0;
+        if (system === "franco") lang = "fr";
+        draw();
+      });
+      $$("[data-cls]").forEach((b) => b.onclick = () => { cls = +b.dataset.cls; draw(); });
+      $("#go").onclick = () => {
+        const p = { id: uid(), name: $("#nm").value.trim(), avatar: av, type: "child", system, cls, lang: $("#child-lang").value, voiceHelp: true };
+        S.profiles.push(p); save(); toast(t("toastAdded", { name: p.name })); go("#/profiles");
+      };
     };
+    draw();
   }
+
+  const classLabel = (system, index) => system === "anglo" ? t("classLabel", { n: index + 1 }) : C.curriculum.systems.find((item) => item.id === system)?.classes[index] || "SIL";
+  const className = (profile) => classLabel(profile.system || "anglo", profile.cls || 0);
+  const systemName = (profile) => t(profile.system === "franco" ? "francophone" : "anglophone");
+  const classAndSystem = (profile) => t("classSystem", { className: className(profile), systemName: systemName(profile) });
 
   function profiles() {
     render(`${banner()}<div class="screen center"><div class="logo" style="font-size:1.4rem"><img src="icon.svg" alt="" style="width:34px;height:34px">Lexora</div>
       <h2>${t("whoLearning")}</h2>
-      <div class="profiles">${S.profiles.map((p) => `<button class="profile" data-pid="${p.id}"><span class="avatar lg">${p.avatar}</span>${esc(p.name)}<span class="small muted">${p.type === "child" ? `${t("kids")} · ${p.ageBand}` : p.isParent ? t("parent") : t("learner")}</span></button>`).join("")}</div>
+      <div class="profiles">${S.profiles.map((p) => `<button class="profile" data-pid="${p.id}"><span class="avatar lg">${p.avatar}</span>${esc(p.name)}<span class="small muted">${p.type === "child" ? esc(classAndSystem(p)) : p.isParent ? t("parent") : t("learner")}</span></button>`).join("")}</div>
       ${S.parent ? `<button class="btn secondary" data-go="#/gate">🔒 ${t("parentArea")}</button>` : `<button class="btn secondary" data-go="#/settings">⚙️ ${t("settings")}</button>`}
     </div>`);
     $$("[data-pid]").forEach((b) => b.onclick = () => { S.activeId = b.dataset.pid; save(); go("#/home"); });
@@ -376,13 +414,46 @@
   const unitsFor = (s, p) => !p ? s.units : s.units.filter((u) => !u.audience || u.audience === p.type);
   const lessonIdsFor = (s, p) => unitsFor(s, p).flatMap((u) => u.lessons || []);
   const lessonIds = (sec) => sec.units.flatMap((u) => u.lessons || []);
-  const sectionOf = (lid) => C.sections.find((s) => lessonIds(s).includes(lid));
-  const unitOf = (lid) => { const s = sectionOf(lid); return s && s.units.find((u) => (u.lessons || []).includes(lid)); };
+  const curriculumEntry = (lid) => {
+    for (const [system, subjects] of Object.entries(C.curriculum.plan)) {
+      for (const [subjectId, classes] of Object.entries(subjects)) {
+        for (let cls = 0; cls < classes.length; cls++) {
+          if (classes[cls].includes(lid)) return { system, subjectId, cls, ids: classes[cls] };
+        }
+      }
+    }
+    return null;
+  };
+  const sectionOf = (lid) => {
+    const section = C.sections.find((s) => lessonIds(s).includes(lid));
+    if (section) return section;
+    const curriculum = curriculumEntry(lid);
+    return curriculum ? { id: `subject-${curriculum.subjectId}`, audience: "child", curriculum } : undefined;
+  };
+  const unitOf = (lid) => {
+    const section = C.sections.find((s) => lessonIds(s).includes(lid));
+    if (section) return section.units.find((unit) => (unit.lessons || []).includes(lid));
+    const curriculum = curriculumEntry(lid);
+    return curriculum ? { audience: "child", lessons: curriculum.ids, curriculum } : undefined;
+  };
   function unlocked(lid, pr, p = active()) {
-    const ids = p ? lessonIdsFor(sectionOf(lid), p) : lessonIds(sectionOf(lid)); const i = ids.indexOf(lid);
+    const curriculum = curriculumEntry(lid);
+    if (curriculum) {
+      const i = curriculum.ids.indexOf(lid);
+      return i <= 0 || !!pr.lessons[curriculum.ids[i - 1]];
+    }
+    const section = sectionOf(lid);
+    if (!section) return false;
+    const ids = p ? lessonIdsFor(section, p) : lessonIds(section); const i = ids.indexOf(lid);
     return i <= 0 || !!pr.lessons[ids[i - 1]];
   }
   function nextLesson(p, pr) {
+    if (p.type === "child") {
+      for (const subject of C.curriculum.subjects[p.system || "anglo"]) {
+        const ids = C.curriculum.plan[p.system || "anglo"][subject.id][p.cls || 0] || [];
+        for (const id of ids) if (!pr.lessons[id] && unlocked(id, pr, p)) return id;
+      }
+    }
     for (const s of sectionsFor(p)) for (const id of lessonIdsFor(s, p)) if (!pr.lessons[id] && unlocked(id, pr, p)) return id;
     return null;
   }
@@ -394,9 +465,14 @@
     const nxtTranslation = nxt ? tc(nxtTitle) : "";
     render(`${topbar()}<div class="screen">
       <h2>${kid ? esc(t("homeHi", { name: p.name })) : `${t("hello")} ${esc(p.name)}`}</h2>
-      <p class="muted" style="margin-top:-6px">${kid ? "👋" : t("level", { level: esc(p.level || "Beginner A1") })}</p>
+      <p class="muted" style="margin-top:-6px">${kid ? esc(classAndSystem(p)) : t("level", { level: esc(p.level || "Beginner A1") })}</p>
       ${nxt ? `<button class="lesson-row" data-go="#/lesson/${nxt}" style="border:2px solid var(--accent)"><span class="em">${C.lessons[nxt].emoji}</span><span style="flex:1"><span class="small muted">${t("continueLesson")}</span><br><span class="t" dir="ltr">${esc(nxtTitle)}</span>${nxtTranslation ? `<br><span class="small muted" dir="auto">${esc(nxtTranslation)}</span>` : ""}</span><span style="font-size:1.6rem">▶️</span></button>` : `<div class="card">🎉 ${t("lessonFinished")}</div>`}
-      ${sectionsFor(p).map((s) => `<button class="section-card" style="background:${s.color}" data-go="#/section/${s.id}"><span class="em">${s.emoji}</span><span><h3>${esc(translatedSection(s.title))}</h3><p>${esc(translatedSection(s.desc))}</p></span></button>`).join("")}
+      ${kid ? C.curriculum.subjects[p.system || "anglo"].map((subject) => {
+        const ids = C.curriculum.plan[p.system || "anglo"][subject.id][p.cls || 0] || [];
+        const stars = ids.reduce((total, id) => total + (pr.lessons[id]?.stars || 0), 0);
+        return `<button class="section-card curriculum-card" style="background:${subject.color}" data-go="#/subject/${subject.id}"><span class="em">${subject.emoji}</span><span><h3>${esc(t(`subject_${p.system || "anglo"}_${subject.id}`))}</h3><p>${starsHtml(stars)}</p></span></button>`;
+      }).join("") + `<button class="section-card" style="background:#C2410C" data-go="#/section/spelling"><span class="em">✏️</span><span><h3>${esc(translatedSection("Spelling Studio"))}</h3><p>${esc(translatedSection("Spelling rules, word building, dictation and tests."))}</p></span></button>`
+        : sectionsFor(p).map((s) => `<button class="section-card" style="background:${s.color}" data-go="#/section/${s.id}"><span class="em">${s.emoji}</span><span><h3>${esc(translatedSection(s.title))}</h3><p>${esc(translatedSection(s.desc))}</p></span></button>`).join("")}
       ${kid ? "" : `<button class="section-card locked" onclick="void 0" data-locked><span class="em">🤖</span><span><h3>${t("aiTutor")}</h3><p>${t("aiTutorDesc")}</p></span></button>`}
     </div>${tabbar("home")}`);
     const lk = $("[data-locked]"); if (lk) lk.onclick = () => toast(t("aiPlanned"));
@@ -404,13 +480,31 @@
   }
 
   const translatedSection = (value) => tc(value) || value;
-  const helperLine = (english) => {
-    const translation = tc(english);
+  const helperLine = (english, sourceLang = "en") => {
+    const translation = sourceLang === "en" ? tc(english) : "";
     return translation ? `<div class="help" dir="auto">🌐 ${esc(translation)} <button class="speak mini" data-say-lang="${esc(translation)}" aria-label="Listen to translation">🔊</button></div>` : "";
   };
   const glossLabel = (word) => { const meaning = gl(word); return meaning ? `<div class="gloss"><span dir="ltr">${esc(word)}</span> — <span dir="auto">${esc(meaning)}</span></div>` : ""; };
-  const promptMarkup = (prompt) => `<div class="prompt" dir="ltr">${esc(prompt)}</div>${helperLine(prompt)}`;
+  const promptMarkup = (prompt, sourceLang = "en") => `<div class="prompt" dir="${sourceLang === "en" ? "ltr" : "auto"}">${esc(prompt)}</div>${helperLine(prompt, sourceLang)}`;
   const badgeStringKey = (id) => ({ first: "badgeFirst", three: "threeBadge", perfect: "perfectBadge", speller: "spellerBadge", reader: "readerBadge", streak3: "streakBadge", movie: "movie", maths: "mathsWhiz", family: "familyBadge", shopper: "shopperBadge", shapes: "shapesBadge", ten: "tenBadge" }[id] || id);
+
+  function subject(id, selectedClass = active().cls || 0) {
+    const p = active(), pr = prog(p.id), system = p.system || "anglo";
+    const details = C.curriculum.subjects[system].find((item) => item.id === id);
+    if (!details) return go("#/home");
+    const ids = C.curriculum.plan[system][id][selectedClass] || [];
+    render(`${topbar()}<div class="screen"><button class="back" data-go="#/home">‹ ${t("home")}</button>
+      <div class="section-card" style="background:${details.color}"><span class="em">${details.emoji}</span><span><h3>${esc(t(`subject_${system}_${id}`))}</h3><p>${esc(classAndSystem({ ...p, cls: selectedClass }))}</p></span></div>
+      <div class="field"><label for="subject-class">${t("class")}</label><select id="subject-class"><option value="${selectedClass}" selected>${esc(classLabel(system, selectedClass))}</option><optgroup label="${t("otherClasses")}">${C.curriculum.systems.find((item) => item.id === system).classes.map((name, index) => index === selectedClass ? "" : `<option value="${index}">${esc(classLabel(system, index))}</option>`).join("")}</optgroup></select></div>
+      <div class="unit">${ids.map((lid) => {
+        const L = C.lessons[lid], done = pr.lessons[lid], open = unlocked(lid, pr, p);
+        const titleTranslation = tc(L.title);
+        return `<button class="lesson-row ${open ? "" : "locked"}" data-lid="${lid}" data-open="${open ? 1 : ""}"><span class="em">${open ? L.emoji : "🔒"}</span><span style="flex:1"><span class="t" dir="ltr">${esc(L.title)}</span>${titleTranslation ? `<br><span class="small muted" dir="auto">${esc(titleTranslation)}</span>` : ""}<br><span class="small muted">${esc(L.skill)} · ${L.activities.length} ${t("activities", { n: "" }).trim()}${L.activities.some((a) => a.type === "video") ? ` · ${t("videoTag")}` : ""}</span></span>${done ? starsHtml(done.stars) : open ? "▶️" : ""}</button>`;
+      }).join("") || `<p class="muted">${t("noLessonsForClass")}</p>`}</div>
+    </div>${tabbar("home")}`);
+    $("#subject-class").onchange = () => subject(id, +$("#subject-class").value);
+    $$("[data-lid]").forEach((button) => button.onclick = () => button.dataset.open ? go(`#/lesson/${button.dataset.lid}`) : toast(t("unlockMsg")));
+  }
 
   function section(id) {
     const s = C.sections.find((x) => x.id === id); if (!s) return go("#/home");
@@ -438,10 +532,17 @@
     if (!L) return go("#/home");
     const p = preview ? null : active();
     if (!preview && lid !== "review" && !unlocked(lid, prog(p.id))) return go("#/home");
-    const kid = preview ? sectionOf(lid).id === "kids" || unitOf(lid).audience === "child" : p.type === "child";
+    const lessonUnit = unitOf(lid);
+    const kid = preview ? !!curriculumEntry(lid) || lessonUnit?.audience === "child" : p.type === "child";
     const st = { queue: L.activities.map((_, i) => i), pos: 0, first: {}, retried: new Set(), wrongWords: new Set(), rightWords: new Set(), t0: Date.now() };
 
-    const leave = () => { if (confirm(t("leaveConfirm"))) { stopAudio(); go(preview ? "#/admin" : `#/section/${lid === "review" ? "spelling" : sectionOf(lid).id}`); } };
+    const leave = () => {
+      if (confirm(t("leaveConfirm"))) {
+        stopAudio();
+        const curriculum = curriculumEntry(lid);
+        go(preview ? "#/admin" : lid === "review" ? "#/section/spelling" : curriculum ? `#/subject/${curriculum.subjectId}` : `#/section/${sectionOf(lid).id}`);
+      }
+    };
 
     function show() {
       const idx = st.queue[st.pos], a = L.activities[idx];
@@ -450,7 +551,7 @@
       $(".x").onclick = leave;
       const act = $("#act"), ft = $("#ft");
       const ctx = {
-        preview, next,
+        preview, next, lang: L.lang || "en", promptLang: L.promptLang || L.lang || "en",
         ready(fn) { ft.innerHTML = `<button class="btn" id="chk" disabled>${t("check")}</button>`; ctx.check = fn; $("#chk", ft).onclick = () => ctx.result(ctx.check()); },
         enable(on = true) { const b = $("#chk", ft); if (b) b.disabled = !on; },
         cont(label = t("continue"), fn) { ft.className = "footer"; ft.innerHTML = `<button class="btn" id="cnt">${label}</button>`; $("#cnt", ft).onclick = fn || next; },
@@ -463,12 +564,13 @@
           const praiseKey = ["great", "excellent", "wellDone", "brilliant"][Math.floor(Math.random() * 4)];
           const praise = t(praiseKey);
           ft.className = `footer ${ok ? "good" : "wrong"}`;
-          ft.innerHTML = `<div class="fb">${ok ? "✓ " + praise : "✗ " + t("notQuite")}${!ok && answer ? `<small>${t("correctAnswer")} <b dir="ltr">${esc(answer)}</b></small>` : ""}${explain && !ok ? `<small dir="auto">${esc(explain)}</small>${helperLine(explain)}` : ""}${!ok ? `<small class="muted">${t("retryEnd")}</small>` : ""}</div><button class="btn ${ok ? "ok" : "bad"}" id="cnt">${t("continue")}</button>`;
+          ft.innerHTML = `<div class="fb">${ok ? "✓ " + praise : "✗ " + t("notQuite")}${!ok && answer ? `<small>${t("correctAnswer")} <b dir="ltr">${esc(answer)}</b></small>` : ""}${explain && !ok ? `<small dir="auto">${esc(explain)}</small>${helperLine(explain, ctx.promptLang)}` : ""}${!ok ? `<small class="muted">${t("retryEnd")}</small>` : ""}</div><button class="btn ${ok ? "ok" : "bad"}" id="cnt">${t("continue")}</button>`;
           $("#cnt", ft).onclick = next;
           if (kid) speakUi(ok ? praiseKey : "greatAgain");
           else if (!ok && answer) {
-            if (helpOn()) speakSeq([helpPart(t("correctAnswer")), { text: speechAnswer || answer, lang: "en" }, helpPart(tc(explain))].filter(Boolean));
-            else speak(answer);
+            const explainPart = explain ? ctx.promptLang === "en" ? helpPart(tc(explain)) : { text: explain, lang: ctx.promptLang } : null;
+            if (helpOn()) speakSeq([helpPart(t("correctAnswer")), { text: speechAnswer || answer, lang: ctx.lang }, explainPart].filter(Boolean));
+            else speak(answer, { lang: ctx.lang });
           }
         }
       };
@@ -502,7 +604,8 @@
         newBadges.forEach((b) => pr.badges.push(b.id));
         save();
       }
-      const backTo = preview ? "#/admin" : lid === "review" ? "#/review" : `#/section/${sectionOf(lid).id}`;
+      const curriculum = curriculumEntry(lid);
+      const backTo = preview ? "#/admin" : lid === "review" ? "#/review" : curriculum ? `#/subject/${curriculum.subjectId}` : `#/section/${sectionOf(lid).id}`;
       render(`<div class="screen center summary"><div class="trophy">${stars === 3 ? "🏆" : stars === 2 ? "🎉" : "👍"}</div>
         <h1>${t("summaryTitle")}</h1>${starsHtml(stars)}
         <div class="statgrid" style="width:100%"><div class="stat"><b>${pct}%</b><span>${t("firstTry")}</span></div><div class="stat"><b>${L.words.length}</b><span>${t("words")}</span></div><div class="stat"><b>${Math.max(1, Math.round(secs / 60))} ${t("minutes")}</b><span>${t("time")}</span></div></div>
@@ -526,7 +629,7 @@
         clearVideoTimer(startupTimer); clearVideoTimer(estimateTimer); clearVideoTimer(safetyTimer);
         startupTimer = estimateTimer = safetyTimer = null;
       };
-      el.innerHTML = `<div class="video-title" dir="ltr">${esc(a.title)}</div>
+      el.innerHTML = `<div class="video-title" dir="ltr">${esc(a.title)}${tc(a.title) ? `<div class="small muted" dir="auto">${esc(tc(a.title))}</div>` : ""}</div>
         <div class="video-stage" id="vstage"><div class="video-art" id="vart"></div>
           <button class="video-overlay" id="vstart" aria-label="${t("play")}">▶︎</button>
           <button class="video-again" id="vagain">${t("watchAgain")}</button>
@@ -551,7 +654,7 @@
         art.textContent = scene.art;
         const parts = scene.caption.split(" ");
         cap.innerHTML = parts.map((word, i) => `<span data-vword="${i}">${esc(word)}</span>`).join(" ");
-        $("#vcap-tr", el).textContent = tc(scene.caption);
+        $("#vcap-tr", el).textContent = ctx.lang === "en" ? tc(scene.caption) : "";
         $("#vcaptions", el).hidden = !captions;
         $("#vstart", el).hidden = started;
         $("#vagain", el).hidden = !ended;
@@ -578,11 +681,11 @@
           const k = starts.findIndex((start, i) => event.charIndex >= start && (i === starts.length - 1 || event.charIndex < starts[i + 1]));
           $$("#vcap-en span", el).forEach((span) => span.classList.toggle("hl", +span.dataset.vword === k));
         };
-        const audioParts = localized ? [
-          { text: scene.caption, lang: "en", rate: speed, boundary: true, onboundary },
-          helpPart(tc(scene.caption))
-        ].filter(Boolean) : null;
-        const spokenParts = localized ? audioParts.filter((part) => part.lang === "en" || voiceFor(part.lang)).length : 1;
+        const audioParts = [
+          { text: scene.caption, lang: ctx.lang, rate: speed, boundary: true, onboundary },
+          ctx.lang === "en" ? helpPart(tc(scene.caption)) : null
+        ].filter(Boolean);
+        const spokenParts = audioParts.length;
         const estimate = ((1200 + 420 * words) * Math.max(1, spokenParts)) / speed;
         let speechStarted = false;
         const useEstimate = () => {
@@ -600,6 +703,7 @@
         };
         if (localized && hasTTS) speakSeq(audioParts, { rate: speed, onstart, onend: () => advance(thisToken) });
         else speak(scene.caption, {
+          lang: ctx.lang,
           rate: speed,
           onstart: hasTTS ? onstart : undefined,
           onboundary,
@@ -637,59 +741,60 @@
     },
     number(a, el, ctx, kid) {
       const inputMarkup = `<input class="typed numeric ${kid ? "kid-number" : ""}" id="num" type="text" inputmode="numeric" pattern="[0-9, ]*" autocomplete="off" aria-label="Answer">`;
-      el.innerHTML = `${promptMarkup(a.prompt)}${a.visual ? `<div class="number-visual" dir="ltr">${a.visual}</div>` : ""}${a.unit ? `<div class="number-answer" dir="ltr">${inputMarkup}<span class="number-unit" dir="ltr">${esc(a.unit)}</span></div>` : inputMarkup}`;
+      el.innerHTML = `${promptMarkup(a.prompt, ctx.promptLang)}${a.visual ? `<div class="number-visual" dir="ltr">${a.visual}</div>` : ""}${a.unit ? `<div class="number-answer" dir="ltr">${inputMarkup}<span class="number-unit" dir="ltr">${esc(a.unit)}</span></div>` : inputMarkup}`;
       const input = $("#num", el);
       input.oninput = () => ctx.enable(!!input.value.trim());
       input.onkeydown = (event) => { if (event.key === "Enter" && input.value.trim()) $("#chk").click(); };
       ctx.ready(() => ({ ok: Number(input.value.replace(/[,\s]/g, "")) === Number(a.answer), answer: a.unit ? `${Number(a.answer).toLocaleString("en-US")} ${a.unit}` : a.answer }));
-      if (helpOn()) speakAuto(a.prompt);
+      if (helpOn()) speakAuto(a.prompt, null, ctx);
     },
     card(a, el, ctx) {
       el.innerHTML = `<div class="flash" dir="ltr">${a.big ? `<div class="big">${a.big}</div>` : ""}${a.emoji ? `<div class="emoji">${a.emoji}</div>` : ""}
-        ${a.title ? `<h2>${esc(a.title)}</h2>${helperLine(a.title)}` : ""}${a.text ? `<div class="word">${esc(a.text)}</div>${/^[\p{L}\p{N}]+$/u.test(a.text) ? glossLabel(a.text) : helperLine(a.text)}` : ""}${a.lines ? `<div class="lines">${a.lines.map((l) => `<div>${l}</div>`).join("")}</div>` : ""}
-        ${a.say ? speakBtns(a.say) : ""}</div>`;
+        ${a.title ? `<h2>${esc(a.title)}</h2>${helperLine(a.title, ctx.lang)}` : ""}${a.text ? `<div class="word">${esc(a.text)}</div>${/^[\p{L}\p{N}]+$/u.test(a.text) ? glossLabel(a.text) : helperLine(a.text, ctx.lang)}` : ""}${a.lines ? `<div class="lines">${a.lines.map((l) => `<div>${l}</div>`).join("")}</div>` : ""}
+        ${a.say ? speakBtns(a.say, false, ctx.lang) : ""}</div>`;
       if (helpOn()) {
         const singleWord = a.text && /^[\p{L}\p{N}]+$/u.test(a.text);
         const translation = singleWord ? gl(a.text) : tc(a.title) || tc(a.text);
-        speakSeq([a.say ? { text: a.say, lang: "en" } : null, helpPart(translation)].filter(Boolean));
-      } else if (a.say) speak(a.say);
+        speakSeq([a.say ? { text: a.say, lang: ctx.lang } : null, ctx.lang === "en" ? helpPart(translation) : null].filter(Boolean));
+      } else if (a.say) speak(a.say, { lang: ctx.lang });
       ctx.cont();
     },
     choice(a, el, ctx, kid) {
       let sel = null;
-      el.innerHTML = `${promptMarkup(a.prompt)}${a.listen ? speakBtns(a.say, true) : ""}${a.bigEmoji ? `<div class="bigemoji" dir="ltr">${a.bigEmoji}</div>` : ""}
-        ${a.word && !a.listen ? speakBtns(a.say) : ""}
+      el.innerHTML = `${promptMarkup(a.prompt, ctx.promptLang)}${a.listen ? speakBtns(a.say, true, ctx.lang) : ""}${a.bigEmoji ? `<div class="bigemoji" dir="ltr">${a.bigEmoji}</div>` : ""}
+        ${a.word && !a.listen ? speakBtns(a.say, false, ctx.lang) : ""}
         <div class="options ${a.pictures ? "pics" : ""}" dir="ltr">${a.options.map((o, i) => `<button class="opt" data-i="${i}" dir="ltr">${o.e ? `<span class="e">${o.e}</span>` : ""}${a.pictures && kid ? "" : esc(o.t)}</button>`).join("")}</div>`;
       $$(".opt", el).forEach((b) => b.onclick = () => {
         sel = +b.dataset.i; $$(".opt", el).forEach((x) => x.classList.toggle("sel", x === b)); ctx.enable();
-        const o = a.options[sel]; if (kid || a.pictures) speak(o.t);
+        const o = a.options[sel]; if (kid || a.pictures) speak(o.t, { lang: ctx.lang });
       });
       ctx.ready(() => {
         const ok = sel === a.answer; $$(".opt", el)[a.answer].classList.add("good"); if (!ok) $$(".opt", el)[sel].classList.add("wrong");
         return { ok, answer: a.sentence || a.options[a.answer].t };
       });
-      if (helpOn()) speakAuto(a.prompt, a.listen || kid || a.word ? a.say || a.prompt : null);
-      else if (a.listen || kid || a.word) speak(a.say || a.prompt);
+      const speakText = a.listen || kid || a.word ? a.say || (ctx.promptLang === "en" ? a.prompt : null) : null;
+      if (helpOn()) speakAuto(a.prompt, speakText, ctx, a.say ? ctx.lang : ctx.promptLang);
+      else if (speakText) speak(speakText, { lang: a.say ? ctx.lang : ctx.promptLang });
     },
     truefalse(a, el, ctx) {
       let sel = null;
-      el.innerHTML = `<div class="muted small">${t("truefalseTitle")}</div>${promptMarkup(a.prompt)}
+      el.innerHTML = `<div class="muted small">${t("truefalseTitle")}</div>${promptMarkup(a.prompt, ctx.promptLang)}
         <div class="tf" dir="ltr"><button class="opt" data-v="1">✓ ${t("true")}</button><button class="opt" data-v="0">✗ ${t("false")}</button></div>`;
       $$(".opt", el).forEach((b) => b.onclick = () => { sel = b.dataset.v === "1"; $$(".opt", el).forEach((x) => x.classList.toggle("sel", x === b)); ctx.enable(); });
       ctx.ready(() => {
         const ok = sel === a.answer; $$(".opt", el)[a.answer ? 0 : 1].classList.add("good"); if (!ok) $$(".opt", el)[sel ? 0 : 1].classList.add("wrong");
         return { ok, answer: a.answer ? t("true") : t("false"), speechAnswer: a.answer ? tEn("true") : tEn("false"), explain: a.explain };
       });
-      if (helpOn()) speakAuto(a.prompt);
+      if (helpOn()) speakAuto(a.prompt, null, ctx);
     },
     match(a, el, ctx, kid) {
       const L = shuffle(a.pairs.map((p) => p[0])), Rr = shuffle(a.pairs.map((p) => p[1]));
       let pick = null, mistakes = 0, done = 0;
-      el.innerHTML = `${promptMarkup(a.prompt)}<div class="match" dir="ltr">${L.map((x, i) => `<button class="opt" data-side="l" data-v="${esc(x)}" style="grid-column:1;grid-row:${i + 1}" dir="ltr">${esc(x)}</button>`).join("")}${Rr.map((x, i) => `<button class="opt" data-side="r" data-v="${esc(x)}" style="grid-column:2;grid-row:${i + 1}" dir="ltr">${esc(x)}</button>`).join("")}</div>`;
+      el.innerHTML = `${promptMarkup(a.prompt, ctx.promptLang)}<div class="match" dir="ltr">${L.map((x, i) => `<button class="opt" data-side="l" data-v="${esc(x)}" style="grid-column:1;grid-row:${i + 1}" dir="ltr">${esc(x)}</button>`).join("")}${Rr.map((x, i) => `<button class="opt" data-side="r" data-v="${esc(x)}" style="grid-column:2;grid-row:${i + 1}" dir="ltr">${esc(x)}</button>`).join("")}</div>`;
       ft(ctx);
       $$(".opt", el).forEach((b) => b.onclick = () => {
         if (b.classList.contains("done")) return;
-        if (!/\p{Extended_Pictographic}/u.test(b.dataset.v)) speak(b.dataset.v.replace(/^(\w)\w$/, "$1"));
+        if (!/\p{Extended_Pictographic}/u.test(b.dataset.v)) speak(b.dataset.v.replace(/^(\w)\w$/, "$1"), { lang: b.dataset.side === "l" ? ctx.lang : ctx.promptLang });
         if (!pick || pick.dataset.side === b.dataset.side) { if (pick) pick.classList.remove("sel"); pick = b; b.classList.add("sel"); return; }
         const [l, r] = pick.dataset.side === "l" ? [pick, b] : [b, pick];
         const good = a.pairs.some((p) => p[0] === l.dataset.v && p[1] === r.dataset.v);
@@ -699,22 +804,22 @@
         if (done === a.pairs.length) ctx.result({ ok: mistakes === 0, answer: mistakes ? a.pairs.map((p) => `${p[0]} → ${p[1]}`).join(", ") : "" });
       });
       function ft(c) { $("#ft").innerHTML = `<p class="small muted" style="text-align:center;margin:0">${t("tapPair")}</p>`; }
-      if (helpOn()) speakAuto(a.prompt, kid && a.say ? a.say : null);
-      else if (kid && a.say) speak(a.say);
+      if (helpOn()) speakAuto(a.prompt, kid && a.say ? a.say : null, ctx);
+      else if (kid && a.say) speak(a.say, { lang: ctx.lang });
     },
     missing(a, el, ctx) {
       let sel = null;
       const draw = () => a.word.split("").map((ch, i) => i === a.hide ? `<span class="slot blank">${sel || "_"}</span>` : `<span class="slot">${ch}</span>`).join("");
-      el.innerHTML = `${promptMarkup(a.prompt)}${a.emoji ? `<div class="bigemoji" dir="ltr">${a.emoji}</div>` : ""}${speakBtns(a.say)}
+      el.innerHTML = `${promptMarkup(a.prompt, ctx.promptLang)}${a.emoji ? `<div class="bigemoji" dir="ltr">${a.emoji}</div>` : ""}${speakBtns(a.say, false, ctx.lang)}
         <div class="wordview ${a.word.length > 6 ? "long" : ""}" id="wv" dir="ltr">${draw()}</div><div class="tiles" dir="ltr">${a.choices.map((c) => `<button class="tile" data-c="${c}" dir="ltr">${c}</button>`).join("")}</div>`;
       $$(".tile", el).forEach((b) => b.onclick = () => { sel = b.dataset.c; $("#wv", el).innerHTML = draw(); $$(".tile", el).forEach((x) => x.classList.toggle("sel", x === b)); ctx.enable(); });
-      ctx.ready(() => ({ ok: sel === a.word[a.hide], answer: a.word }));
-      speakAuto(a.prompt, a.say);
+      ctx.ready(() => ({ ok: sel?.toLowerCase() === a.word[a.hide]?.toLowerCase(), answer: a.word }));
+      speakAuto(a.prompt, a.say, ctx);
     },
     build(a, el, ctx) {
       const letters = shuffle(a.word.split("")).map((c, i) => ({ c, i }));
       let built = [];
-      el.innerHTML = `${promptMarkup(a.prompt)}${a.emoji ? `<div class="bigemoji" dir="ltr">${a.emoji}</div>` : ""}${speakBtns(a.say || a.word)}
+      el.innerHTML = `${promptMarkup(a.prompt, ctx.promptLang)}${a.emoji ? `<div class="bigemoji" dir="ltr">${a.emoji}</div>` : ""}${speakBtns(a.say || a.word, false, ctx.lang)}
         <div class="wordview ${a.word.length > 6 ? "long" : ""}" id="wv" dir="ltr"></div><div class="tiles" id="tl" dir="ltr"></div>`;
       const draw = () => {
         $("#wv", el).innerHTML = a.word.split("").map((_, k) => built[k] ? `<button class="slot tile" data-k="${k}">${built[k].c}</button>` : `<span class="slot blank"></span>`).join("");
@@ -725,13 +830,13 @@
       };
       ctx.ready(() => ({ ok: built.map((t) => t.c).join("").toLowerCase() === a.word.toLowerCase(), answer: a.word }));
       draw();
-      if (helpOn()) speakAuto(a.prompt, a.say || a.word);
-      else speak(a.say || a.word);
+      if (helpOn()) speakAuto(a.prompt, a.say || a.word, ctx);
+      else speak(a.say || a.word, { lang: ctx.lang });
     },
     order(a, el, ctx) {
       const words = shuffle(a.words).map((w, i) => ({ w, i }));
       let line = [];
-      el.innerHTML = `${promptMarkup(a.prompt)}${a.say ? speakBtns(a.say) : ""}<div class="answer-line" id="al" dir="ltr"></div><div class="tiles" id="tl" dir="ltr"></div>`;
+      el.innerHTML = `${promptMarkup(a.prompt, ctx.promptLang)}${a.say ? speakBtns(a.say, false, ctx.lang) : ""}<div class="answer-line" id="al" dir="ltr"></div><div class="tiles" id="tl" dir="ltr"></div>`;
       const draw = () => {
         $("#al", el).innerHTML = line.map((t, k) => `<button class="tile word" data-k="${k}">${esc(t.w)}</button>`).join("");
         $("#tl", el).innerHTML = words.map((t) => `<button class="tile word ${line.includes(t) ? "used" : ""}" data-i="${t.i}">${esc(t.w)}</button>`).join("");
@@ -741,25 +846,25 @@
       };
       ctx.ready(() => ({ ok: line.map((t) => t.w).join(" ") === a.words.join(" "), answer: a.words.join(" ") }));
       draw();
-      if (helpOn()) speakAuto(a.prompt);
+      if (helpOn()) speakAuto(a.prompt, null, ctx);
     },
     dictation(a, el, ctx) {
-      el.innerHTML = `${promptMarkup(a.prompt)}${speakBtns(a.say, true)}
+      el.innerHTML = `${promptMarkup(a.prompt, ctx.promptLang)}${speakBtns(a.say, true, ctx.lang)}
         <input class="typed" id="ty" dir="ltr" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="${t("typeHere")}" aria-label="Your answer">
         <p class="small muted" style="text-align:center">${t("spellOff")}</p>`;
       const inp = $("#ty", el);
       inp.oninput = () => ctx.enable(!!inp.value.trim());
       inp.onkeydown = (e) => { if (e.key === "Enter" && inp.value.trim()) $("#chk").click(); };
-      ctx.ready(() => ({ ok: norm(inp.value) === norm(a.answer), answer: a.answer }));
-      speakAuto(a.prompt, a.say);
+      ctx.ready(() => ({ ok: ctx.lang === "fr" ? inp.value.trim().toLowerCase() === a.answer.trim().toLowerCase() : norm(inp.value) === norm(a.answer), answer: a.answer }));
+      speakAuto(a.prompt, a.say, ctx);
     },
     story(a, el, ctx) {
       let pg = 0;
       const draw = () => {
         const page = a.pages[pg];
         const words = page.text.split(" ");
-        el.innerHTML = `<div class="muted small">${t("story")} · <span dir="ltr">${esc(a.title)}</span></div><div class="story"><div class="emoji">${page.emoji}</div>
-          <div class="text" id="tx" dir="ltr">${words.map((w, i) => `<span data-w="${i}">${esc(w)}</span>`).join(" ")}</div>${helperLine(page.text)}</div>
+        el.innerHTML = `<div class="muted small">${t("story")} · <span dir="ltr">${esc(a.title)}</span>${tc(a.title) ? `<div class="small muted" dir="auto">${esc(tc(a.title))}</div>` : ""}</div><div class="story"><div class="emoji">${page.emoji}</div>
+          <div class="text" id="tx" dir="${ctx.lang === "fr" ? "auto" : "ltr"}">${words.map((w, i) => `<span data-w="${i}">${esc(w)}</span>`).join(" ")}</div>${helperLine(page.text, ctx.lang)}</div>
           <div class="dots">${a.pages.map((_, i) => `<i class="${i === pg ? "on" : ""}"></i>`).join("")}</div>
           <div class="speakrow"><button class="speak" id="read">🔊 ${t("readToMe")}</button></div>`;
         const starts = []; let pos = 0; words.forEach((w) => { starts.push(pos); pos += w.length + 1; });
@@ -767,10 +872,10 @@
         const clearHighlight = () => $$("#tx span", el).forEach((s) => s.classList.remove("hl"));
         const read = () => {
           if (helpOn()) speakSeq([
-            { text: page.text, lang: "en", rate: 0.8, boundary: true, onboundary, onend: clearHighlight },
-            helpPart(tc(page.text))
+            { text: page.text, lang: ctx.lang, rate: 0.8, boundary: true, onboundary, onend: clearHighlight },
+            ctx.lang === "en" ? helpPart(tc(page.text)) : null
           ].filter(Boolean), { rate: 0.8 });
-          else speak(page.text, { rate: 0.8, onboundary, onend: clearHighlight });
+          else speak(page.text, { lang: ctx.lang, rate: 0.8, onboundary, onend: clearHighlight });
         };
         $("#read", el).onclick = read; read();
         const last = pg === a.pages.length - 1;
@@ -787,6 +892,11 @@
     render(`${topbar()}<div class="screen"><h2>${t("myProgress")}</h2>
       <div class="statgrid"><div class="stat"><b>⭐ ${totalStars(pr)}</b><span>${t("stars")}</span></div><div class="stat"><b>${doneCount(pr)}</b><span>${t("lessonsDone")}</span></div><div class="stat"><b>🔥 ${pr.streak.count}</b><span>${t("dayStreak")}</span></div>
       <div class="stat"><b>${pr.words.length}</b><span>${t("wordsLearned")}</span></div><div class="stat"><b>${Math.round(pr.seconds / 60)}</b><span>${t("minutes")}</span></div><div class="stat"><b>${acc[1] ? Math.round((acc[0] / acc[1]) * 100) + "%" : "–"}</b><span>${t("accuracy")}</span></div></div>
+      ${p.type === "child" ? `<div class="card"><h3>${t("subjectProgress")}</h3>${C.curriculum.subjects[p.system || "anglo"].map((subject) => {
+        const ids = C.curriculum.plan[p.system || "anglo"][subject.id][p.cls || 0] || [];
+        const stars = ids.reduce((total, id) => total + (pr.lessons[id]?.stars || 0), 0);
+        return `<div class="skillbar"><span class="l">${esc(t(`subject_${p.system || "anglo"}_${subject.id}`))}</span><span>${starsHtml(stars)}</span></div>`;
+      }).join("")}</div>` : ""}
       <div class="card"><h3>${t("skills")}</h3>${Object.keys(pr.skills).length ? Object.entries(pr.skills).map(([k, s]) => { const v = Math.round((s.c / s.t) * 100); return `<div class="skillbar"><span class="l">${esc(k)}</span><div class="bar"><i style="width:${v}%"></i></div><span>${v}%</span></div>`; }).join("<div style='height:8px'></div>") : `<p class="muted small">${t("finishSkill")}</p>`}</div>
       <h3>${t("badges")}</h3><div class="badges">${BADGES.map((b) => `<div class="badge ${pr.badges.includes(b.id) ? "" : "off"}"><span class="e">${b.e}</span>${t(b.key || badgeStringKey(b.id))}</div>`).join("")}</div>
       ${pr.log.length ? `<div class="card"><h3>${t("recentLessons")}</h3>${pr.log.slice(0, 6).map((l) => `<div class="small" style="display:flex;justify-content:space-between;padding:4px 0"><span>${esc(l.title)}</span><b>${l.pct}%</b></div>`).join("")}</div>` : ""}
@@ -836,7 +946,10 @@
       <h2>${t("parentArea")}</h2><p class="muted">${t("yourProgress", { name: esc(S.parent.name) })}</p>
       ${kids.length ? kids.map((k) => { const pr = prog(k.id), last = pr.log[0];
         const acc = Object.values(pr.skills).reduce((a, s) => [a[0] + s.c, a[1] + s.t], [0, 0]);
-        return `<div class="card"><div style="display:flex;gap:12px;align-items:center"><span class="avatar lg" style="width:56px;height:56px;font-size:2rem">${k.avatar}</span><div style="flex:1"><b>${esc(k.name)}</b><div class="small muted">${t("age")} ${k.ageBand} · ${t("lastActive", { date: last ? new Date(last.at).toLocaleDateString() : t("never") })}</div></div></div>
+        const system = k.system || "anglo";
+        return `<div class="card"><div style="display:flex;gap:12px;align-items:center"><span class="avatar lg" style="width:56px;height:56px;font-size:2rem">${k.avatar}</span><div style="flex:1"><b>${esc(k.name)}</b><div class="small muted">${esc(classAndSystem(k))} · ${t("lastActive", { date: last ? new Date(last.at).toLocaleDateString() : t("never") })}</div></div></div>
+          <div class="field"><label>${t("schoolSystem")}</label><select data-kid-system="${k.id}">${C.curriculum.systems.map((item) => `<option value="${item.id}" ${item.id === system ? "selected" : ""}>${t(item.id === "anglo" ? "anglophone" : "francophone")}</option>`).join("")}</select></div>
+          <div class="field"><label>${t("class")}</label><select data-kid-class="${k.id}">${C.curriculum.systems.find((item) => item.id === system).classes.map((name, index) => `<option value="${index}" ${index === (k.cls || 0) ? "selected" : ""}>${esc(classLabel(system, index))}</option>`).join("")}</select></div>
           <div class="field parent-language"><label>${t("language")}</label><select data-kid-lang="${k.id}">${window.LEXORA_I18N.langs.map((l) => `<option value="${l.code}" ${l.code === (k.lang || "en") ? "selected" : ""}>${l.name}</option>`).join("")}</select></div>
           ${(k.lang || "en") !== "en" ? `<label class="check voice-help-option"><input type="checkbox" data-kid-voice="${k.id}" ${k.voiceHelp !== false ? "checked" : ""}> ${t("voiceInMyLang")}</label>` : ""}
           <div class="statgrid" style="margin-top:12px"><div class="stat"><b>${doneCount(pr)}</b><span>${t("lessonsDone")}</span></div><div class="stat"><b>${Math.round(pr.seconds / 60)}</b><span>${t("minutes")}</span></div><div class="stat"><b>${acc[1] ? Math.round((acc[0] / acc[1]) * 100) + "%" : "–"}</b><span>${t("accuracy")}</span></div></div>
@@ -854,6 +967,16 @@
     $$("[data-kid-lang]").forEach((select) => select.onchange = () => {
       const child = S.profiles.find((profile) => profile.id === select.dataset.kidLang);
       child.lang = select.value; save(); parentArea();
+    });
+    $$("[data-kid-system]").forEach((select) => select.onchange = () => {
+      const child = S.profiles.find((profile) => profile.id === select.dataset.kidSystem);
+      child.system = select.value;
+      child.cls = Math.min(child.cls || 0, C.curriculum.systems.find((item) => item.id === child.system).classes.length - 1);
+      save(); parentArea();
+    });
+    $$("[data-kid-class]").forEach((select) => select.onchange = () => {
+      const child = S.profiles.find((profile) => profile.id === select.dataset.kidClass);
+      child.cls = +select.value; save(); parentArea();
     });
     $$("[data-kid-voice]").forEach((checkbox) => checkbox.onchange = () => {
       const child = S.profiles.find((profile) => profile.id === checkbox.dataset.kidVoice);
@@ -891,12 +1014,13 @@
       ${C.sections.map((s) => `<div class="card" style="padding:12px"><h3>${s.emoji} ${s.title}</h3><table class="admin"><tr><th>Unit / lesson</th><th>Audience</th><th>Skill</th><th>Acts</th><th>Status</th><th></th></tr>
         ${s.units.map((u) => u.soon ? `<tr><td>${u.title}</td><td>${u.audience === "child" ? "Kids" : u.audience === "learner" ? "13+" : "All"}</td><td></td><td>0</td><td><span class="tag soon">Draft</span></td><td></td></tr>` : u.lessons.map((lid) => { const L = C.lessons[lid];
           return `<tr><td>${u.title}<br><b>${esc(L.title)}</b></td><td>${u.audience === "child" ? "Kids" : u.audience === "learner" ? "13+" : "All"}</td><td>${L.skill}</td><td>${L.activities.length}</td><td><span class="tag">Published</span></td><td><button class="btn secondary" style="padding:6px 10px;font-size:.8rem" data-go="#/preview/${lid}">Play</button></td></tr>`; }).join("")).join("")}</table></div>`).join("")}
+      <div class="card" style="padding:12px"><h3>${t("curriculum")}</h3>${C.curriculum.systems.map((system) => `<h4>${t(system.id === "anglo" ? "anglophone" : "francophone")}</h4>${C.curriculum.subjects[system.id].map((subject) => `<h4>${esc(t(`subject_${system.id}_${subject.id}`))}</h4><table class="admin"><tr><th>${t("class")}</th><th>${t("lesson")}</th><th></th></tr>${C.curriculum.plan[system.id][subject.id].map((ids, cls) => ids.map((lid) => `<tr><td>${esc(classLabel(system.id, cls))}</td><td>${esc(C.lessons[lid].title)}</td><td><button class="btn secondary" style="padding:6px 10px;font-size:.8rem" data-go="#/preview/${lid}">${t("play")}</button></td></tr>`).join("")).join("")}</table>`).join("")}`).join("")}</div>
       <div class="card"><h3>Activity types used</h3><p class="small">${Object.entries(types).map(([t, n]) => `<b>${t}</b> ×${n}`).join(" · ")}</p></div>
       <p class="small muted">Lessons completed on this device: ${done}.</p></div>`);
   }
 
   // ---------- router ----------
-  const needsProfile = ["home", "section", "lesson", "progress", "review", "placement"];
+  const needsProfile = ["home", "section", "subject", "lesson", "progress", "review", "placement"];
   function router() {
     stopAudio();
     const [r, arg] = location.hash.replace(/^#\/?/, "").split("/");
@@ -905,7 +1029,7 @@
     if (r === "addchild" && !S.parent) return go("#/welcome");
     if (r === "addchild" && !(+sessionStorage.getItem("gate") > Date.now() - 5 * 60e3)) return go("#/gate");
     ({ welcome, age: ageGate, learner: learnerSignup, parent: S.parent ? parentArea : parentSignup, addchild: addChild, profiles: S.profiles.length ? profiles : welcome,
-       placement, home, section: () => section(arg), lesson: () => lesson(arg), preview: () => lesson(arg, true), progress, review, gate, settings, admin }[r] || welcome)();
+       placement, home, section: () => section(arg), subject: () => subject(arg), lesson: () => lesson(arg), preview: () => lesson(arg, true), progress, review, gate, settings, admin }[r] || welcome)();
   }
   window.addEventListener("hashchange", router);
   router();
