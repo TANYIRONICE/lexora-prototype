@@ -723,7 +723,14 @@
     tens: "dizaines", three: "trois", toothbrush: "brosse à dents", total: "total", town: "ville", tradition: "tradition",
     traffic: "circulation", transport: "transport", triangle: "triangle", two: "deux", under: "sous", "United Nations": "Nations unies",
     verb: "verbe", village: "village", visited: "a rendu visite", walked: "a marché", "water vapour": "vapeur d'eau",
-    weather: "temps", week: "semaine", wheel: "roue", wild: "sauvage", XAF: "XAF", Yaoundé: "Yaoundé", yellow: "jaune"
+    weather: "temps", week: "semaine", wheel: "roue", wild: "sauvage", XAF: "XAF", Yaoundé: "Yaoundé", yellow: "jaune",
+    dog: "chien", bird: "oiseau", head: "tête", eyes: "yeux", hands: "mains", banana: "banane", rice: "riz",
+    Monday: "lundi", Tuesday: "mardi", Wednesday: "mercredi", twelve: "douze", twenty: "vingt",
+    shirt: "chemise", shoes: "chaussures", dress: "robe", house: "maison", door: "porte", window: "fenêtre",
+    brother: "frère", "quarter past": "et quart", run: "courir", read: "lire", classroom: "salle de classe",
+    sunny: "ensoleillé", rainy: "pluvieux", season: "saison", price: "prix", cost: "coûter", cheap: "bon marché",
+    plays: "joue", reads: "lit", goes: "va", "is reading": "est en train de lire",
+    "are playing": "sont en train de jouer", running: "en train de courir", returns: "rentre"
   };
   Object.entries(curriculumGlossFr).forEach(([word, french]) => {
     const key = word.toLowerCase();

@@ -407,6 +407,41 @@ async def math_word_problem_screenshot(browser, errors):
     await context.close()
 
 
+async def franco_curriculum_screenshots(browser, errors):
+    profile = {
+        "id": "franco-curriculum-shot", "name": "Ama", "avatar": "🦊", "type": "child",
+        "system": "franco", "cls": 3, "lang": "fr", "voiceHelp": True
+    }
+    context, page = await seeded_page(browser, profile, errors)
+    await page.evaluate("Math.random = () => 0.999")
+
+    await page.goto(BASE + "#/subject/math")
+    await page.wait_for_selector("[data-lid='fm4']")
+    lesson_titles = await page.locator("[data-lid] .t").all_text_contents()
+    assert lesson_titles == ["Les tables de multiplication", "La division", "L'heure et la durée"], lesson_titles
+    await shot(page, "franco-ce2-math-lessons.png")
+
+    await page.goto(BASE + "#/preview/fsc5b")
+    await page.wait_for_selector("#act")
+    await advance_intro(page)
+    science_prompt = await page.locator("#act .prompt").inner_text()
+    assert science_prompt, "Francophone science lesson did not show a question"
+    await shot(page, "franco-science-question.png")
+
+    await page.goto(BASE + "#/preview/fa5c")
+    await page.wait_for_selector("#act")
+    await advance_intro(page)
+    english_prompt = await page.locator("#act .prompt").inner_text()
+    assert english_prompt, "Francophone Anglais lesson did not show a question"
+    await shot(page, "franco-anglais-question.png")
+    print("FRANCOPHONE SCREENSHOTS:", [
+        str(OUT / "franco-ce2-math-lessons.png"),
+        str(OUT / "franco-science-question.png"),
+        str(OUT / "franco-anglais-question.png")
+    ])
+    await context.close()
+
+
 async def missing_curriculum_locale_tests(browser, errors):
     for lang in ["es", "pt", "ar"]:
         context, page = await mocked_voice_page(browser, lang, errors=errors)
@@ -770,18 +805,20 @@ async def main():
         content_errors = await page.evaluate("""() => {
           const content = window.LEXORA_CONTENT, errors = [];
           const validTypes = new Set(['video', 'card', 'choice', 'truefalse', 'match', 'missing', 'build', 'order', 'dictation', 'story', 'number']);
-          const curriculumLessonIds = new Set(Object.values(content.curriculum.plan)
+        const curriculumLessonIds = new Set(Object.values(content.curriculum.plan)
             .flatMap(subjects => Object.values(subjects).flatMap(classes => classes.flat())));
-          const curriculumCells = {};
-          const unchangedIds = new Set(['k1', 'k2', 'k3', 'k4', 'k5', 'k6', 'm1', 'm2', 'm4', 'm5']);
-          const expandedAngloIds = new Set(Object.values(content.curriculum.plan.anglo)
-            .flat().flat().filter(lessonId => !unchangedIds.has(lessonId)));
-          const nonExpandedPrompts = new Set();
-          Object.entries(content.lessons).forEach(([lessonId, lesson]) => {
-            if (expandedAngloIds.has(lessonId)) return;
-            lesson.activities.slice(1).forEach(activity => {
-              if (activity.prompt) nonExpandedPrompts.add(activity.prompt.trim().toLocaleLowerCase());
-            });
+        const curriculumCells = {};
+        const unchangedIds = new Set(['k1', 'k2', 'k3', 'k4', 'k5', 'k6', 'm1', 'm2', 'm4', 'm5']);
+        const expandedAngloIds = new Set(Object.values(content.curriculum.plan.anglo)
+          .flat().flat().filter(lessonId => !unchangedIds.has(lessonId)));
+        const expandedFrancoIds = new Set(Object.values(content.curriculum.plan.franco).flat().flat());
+        const expandedIds = new Set([...expandedAngloIds, ...expandedFrancoIds]);
+        const nonExpandedPrompts = new Set();
+        Object.entries(content.lessons).forEach(([lessonId, lesson]) => {
+          if (expandedIds.has(lessonId)) return;
+          lesson.activities.slice(1).forEach(activity => {
+            if (activity.prompt) nonExpandedPrompts.add(activity.prompt.trim().toLocaleLowerCase());
+          });
           });
           const prompts = new Map();
           let falseTruthCount = 0;
@@ -836,6 +873,14 @@ async def main():
                   if (!(ids || []).some(lessonId => ['video', 'story'].includes(content.lessons[lessonId]?.activities?.[0]?.type))) {
                     errors.push(`${system.id}/${subject.id}/${classIndex}: needs a video or story intro`);
                   }
+                } else if ((ids || []).length < 3) {
+                  errors.push(`${system.id}/${subject.id}/${classIndex}: expected at least 3 lessons, got ${(ids || []).length}`);
+                }
+                if (system.id === 'franco' && (ids || []).length >= 3) {
+                  const introTypes = new Set(ids.map(lessonId => content.lessons[lessonId]?.activities?.[0]?.type));
+                  if (introTypes.size < 2) {
+                    errors.push(`${system.id}/${subject.id}/${classIndex}: lessons need mixed intro types`);
+                  }
                 }
                 (ids || []).forEach(lessonId => {
                   if (!content.lessons[lessonId]) errors.push(`${system.id}/${subject.id}/${classIndex}: missing lesson ${lessonId}`);
@@ -865,7 +910,7 @@ async def main():
             if (!['card', 'video', 'story'].includes(lesson.activities[0]?.type)) {
               errors.push(`${lessonId}: intro is not the first activity`);
             }
-            if (cell.system !== 'anglo' || unchangedIds.has(lessonId)) return;
+            if (!expandedIds.has(lessonId)) return;
             const intro = lesson.activities[0];
             if (intro.type === 'card' && (intro.text || '').trim().length < 60) {
               errors.push(`${lessonId}: card intro needs at least 60 characters`);
@@ -884,9 +929,14 @@ async def main():
             if (types.size < 4) errors.push(`${lessonId}: expected at least 4 question types, got ${types.size}`);
             if (choices.length < 4) errors.push(`${lessonId}: expected at least 4 choice questions, got ${choices.length}`);
             if (choices.length > 5) errors.push(`${lessonId}: has more than 5 choice questions`);
+            if (choices.some(activity => activity.options?.length !== 3 ||
+                new Set(activity.options.map(option => String(option.t ?? option.text ?? option))).size !== 3)) {
+              errors.push(`${lessonId}: each choice question needs three distinct options`);
+            }
             if (truths.length < 2) errors.push(`${lessonId}: expected at least 2 true/false questions`);
             if (!truths.some(activity => activity.answer === false)) errors.push(`${lessonId}: missing a false true/false claim`);
-            const maxSpelling = ['sci', 'soc'].includes(cell.subject) ? 2 : 3;
+            const maxSpelling = (cell.system === 'anglo' && ['sci', 'soc'].includes(cell.subject)) ||
+              (cell.system === 'franco' && ['sci', 'shs'].includes(cell.subject)) ? 2 : 3;
             if (spelling.length > maxSpelling) errors.push(`${lessonId}: has more than ${maxSpelling} spelling questions`);
             scored.forEach(activity => {
               if (!activity.prompt) {
@@ -909,14 +959,18 @@ async def main():
               }
             });
             if (!matches.some(activity => activity.pairs?.length === 4 &&
+                new Set(activity.pairs.map(pair => pair[0])).size === 4 &&
                 new Set(activity.pairs.map(pair => pair[1])).size === 4)) {
-              errors.push(`${lessonId}: needs a four-pair match with unique right-hand sides`);
+              errors.push(`${lessonId}: needs a four-pair match with unique left- and right-hand sides`);
             }
-            if (cell.subject === 'math' && cell.classIndex > 0 &&
+            if (cell.subject === 'math' &&
                 scored.filter(activity => activity.type === 'number').length < 4) {
               errors.push(`${lessonId}: maths lesson needs at least 4 number questions`);
             }
-            if ((cell.subject === 'eng' && cell.classIndex > 0) || cell.subject === 'fre') {
+            const languageLesson = (cell.system === 'anglo' &&
+              ((cell.subject === 'eng' && cell.classIndex > 0) || cell.subject === 'fre')) ||
+              (cell.system === 'franco' && ['fra', 'ang'].includes(cell.subject));
+            if (languageLesson) {
               if (!scored.some(activity => ['build', 'dictation', 'missing'].includes(activity.type))) {
                 errors.push(`${lessonId}: language lesson needs build, dictation, or missing`);
               }
@@ -925,7 +979,7 @@ async def main():
               }
             }
           });
-          if (!falseTruthCount) errors.push('Anglophone curriculum needs at least one false true/false claim with a correction');
+          if (!falseTruthCount) errors.push('Expanded curriculum needs at least one false true/false claim with a correction');
           Object.keys(content.lessons).forEach(lessonId => {
             if (references[lessonId] !== 1) errors.push(`${lessonId}: referenced by ${references[lessonId] || 0} units`);
           });
@@ -937,18 +991,23 @@ async def main():
         lesson_counts = await page.evaluate("""() => {
           const content = window.LEXORA_CONTENT;
           const anglo = Object.values(content.curriculum.plan.anglo).flat().flat();
+          const franco = Object.values(content.curriculum.plan.franco).flat().flat();
           const all = Object.values(content.curriculum.plan).flatMap(subjects =>
             Object.values(subjects).flatMap(classes => classes.flat()));
           const unchanged = new Set(['k1', 'k2', 'k3', 'k4', 'k5', 'k6', 'm1', 'm2', 'm4', 'm5']);
           const expanded = anglo.filter(id => !unchanged.has(id));
+          const scoredFranco = id => content.lessons[id].activities
+            .filter(activity => !['card', 'video', 'story'].includes(activity.type)).length;
           const scored = id => content.lessons[id].activities
             .filter(activity => !['card', 'video', 'story'].includes(activity.type)).length;
           return {
             curriculumLessons: all.length,
             angloLessons: anglo.length,
-            francoLessons: all.length - anglo.length,
+            francoLessons: franco.length,
             expandedAngloLessons: expanded.length,
-            expandedAngloQuestions: expanded.reduce((total, id) => total + scored(id), 0)
+            expandedAngloQuestions: expanded.reduce((total, id) => total + scored(id), 0),
+            expandedFrancoLessons: franco.length,
+            expandedFrancoQuestions: franco.reduce((total, id) => total + scoredFranco(id), 0)
           };
         }""")
         print("CURRICULUM LESSON COUNTS:", lesson_counts)
@@ -1029,6 +1088,7 @@ async def main():
         assert not coverage["missingStrings"], coverage["missingStrings"]
         assert not coverage["missingTranslations"], coverage["missingTranslations"]
         assert not coverage["missingGloss"], coverage["missingGloss"]
+        await franco_curriculum_screenshots(browser, errors)
         await mocked_voice_tests(browser, errors)
         await curriculum_replay_tests(browser, errors)
         await math_word_problem_screenshot(browser, errors)
