@@ -181,6 +181,7 @@ async def seeded_page(browser, profile, errors=None, parent=None, progress=None)
 
 
 async def seek_k1_prompt(page, prompt):
+    await page.evaluate("Math.random = () => 0.999")
     await page.goto(BASE + "#/preview/k1")
     await page.wait_for_timeout(50)
     start = await page.evaluate("window.__spoken.length")
@@ -252,6 +253,7 @@ async def mocked_voice_tests(browser, errors):
     context, page = await mocked_voice_page(browser, "ar", ["en-GB"], voice_help=False, errors=errors)
     await page.goto(BASE + "#/settings")
     await page.locator("#voice-help").check()
+    await page.evaluate("Math.random = () => 0.999")
     await page.goto(BASE + "#/preview/k1")
     await page.wait_for_selector("#cnt")
     await page.locator("#cnt").click()
@@ -306,6 +308,121 @@ async def mocked_voice_tests(browser, errors):
     assert any(item["text"] in praise and item["lang"] == "fr-FR" for item in spoken_f), spoken_f
     print("VOICE SCENARIO f:", spoken_f)
     await context.close()
+
+
+async def rendered_activity_type(page):
+    act = page.locator("#act")
+    if await act.locator(".video-stage").count(): return "video"
+    if await act.locator(".story").count(): return "story"
+    if await act.locator(".flash").count(): return "card"
+    if await act.locator(".match").count(): return "match"
+    if await act.locator("#num").count(): return "number"
+    if await act.locator("#ty").count(): return "dictation"
+    if await act.locator("#al").count(): return "order"
+    if await act.locator("#tl").count(): return "build"
+    if await act.locator("#wv").count(): return "missing"
+    if await act.locator(".tf").count(): return "truefalse"
+    if await act.locator(".options").count(): return "choice"
+    return "unknown"
+
+
+async def advance_intro(page):
+    for _ in range(6):
+        if await rendered_activity_type(page) not in ("card", "video", "story"):
+            return
+        await page.locator("#cnt").click()
+        await page.wait_for_timeout(60)
+    raise AssertionError("Intro did not advance to a scored activity")
+
+
+async def curriculum_replay_tests(browser, errors):
+    context, page = await mocked_voice_page(browser, "en", errors=errors)
+    await page.evaluate("""() => {
+      let calls = 0;
+      Math.random = () => calls++ < 2 ? 0 : 0.999;
+    }""")
+    await page.goto(BASE + "#/preview/am4b")
+    await page.wait_for_selector("#act")
+    intro_type = await page.evaluate("window.LEXORA_CONTENT.lessons.am4b.activities[0].type")
+    assert intro_type in ("card", "video", "story")
+    assert await rendered_activity_type(page) == intro_type, intro_type
+    await advance_intro(page)
+    await page.wait_for_selector("#act .prompt")
+    first_type = await rendered_activity_type(page)
+    first_prompt = await page.locator("#act .prompt").inner_text()
+    assert first_type == "choice", (first_type, first_prompt)
+    original = await page.evaluate("""() => {
+      const activity = window.LEXORA_CONTENT.lessons.am4b.activities.find(item => item.type === 'choice');
+      return { options: activity.options.map(option => option.t), answer: activity.options[activity.answer].t };
+    }""")
+    shown = await page.locator("#act .options .opt").all_text_contents()
+    assert shown != original["options"] and set(shown) == set(original["options"]), (shown, original)
+    await shot(page, "anglo-shuffled-choice-question.png")
+    await page.locator("#act .options .opt").nth(shown.index(original["answer"])).click()
+    await page.locator("#chk").click()
+    assert await page.locator(".footer.good").count(), "Shuffled choice answer index was not remapped"
+    order_a = [intro_type, first_type, first_prompt]
+    print("CURRICULUM REPLAY ATTEMPT 1:", order_a, "OPTIONS:", shown)
+    await context.close()
+
+    context, page = await mocked_voice_page(browser, "en", errors=errors)
+    await page.evaluate("Math.random = () => 0")
+    await page.goto(BASE + "#/preview/am4b")
+    await page.wait_for_selector("#act")
+    second_intro = await page.evaluate("window.LEXORA_CONTENT.lessons.am4b.activities[0].type")
+    assert second_intro in ("card", "video", "story")
+    assert await rendered_activity_type(page) == second_intro, second_intro
+    await advance_intro(page)
+    await page.wait_for_selector("#act .prompt")
+    second_type = await rendered_activity_type(page)
+    second_prompt = await page.locator("#act .prompt").inner_text()
+    order_b = [second_intro, second_type, second_prompt]
+    assert order_a != order_b, (order_a, order_b)
+    assert first_type == second_type == "choice", (first_type, second_type)
+    print("CURRICULUM REPLAY ATTEMPT 2:", order_b, second_prompt)
+    await context.close()
+
+
+async def math_word_problem_screenshot(browser, errors):
+    context, page = await mocked_voice_page(browser, "en", errors=errors)
+    await page.evaluate("""() => {
+      let calls = 0;
+      Math.random = () => {
+        const call = calls++;
+        if (call < 48) return 0.999;
+        const orderCall = call - 48;
+        if (orderCall === 3) return 0.2;
+        if (orderCall === 9) return 0;
+        return 0.999;
+      };
+    }""")
+    await page.goto(BASE + "#/preview/am4b")
+    await page.wait_for_selector("#act")
+    await advance_intro(page)
+    assert await rendered_activity_type(page) == "number"
+    prompt = await page.locator("#act .prompt").inner_text()
+    assert "market bag" in prompt.lower(), prompt
+    await shot(page, "anglo-math-word-problem.png")
+    print("MATH WORD-PROBLEM SCREENSHOT:", prompt)
+    await context.close()
+
+
+async def missing_curriculum_locale_tests(browser, errors):
+    for lang in ["es", "pt", "ar"]:
+        context, page = await mocked_voice_page(browser, lang, errors=errors)
+        await page.evaluate("Math.random = () => 0.999; window.__spoken = []")
+        await page.goto(BASE + "#/preview/ae2")
+        await page.wait_for_selector("#act")
+        await page.locator("#cnt").click()
+        await page.wait_for_selector("#act .prompt")
+        await page.wait_for_timeout(100)
+        prompt = await page.locator("#act .prompt").inner_text()
+        assert await page.locator("#act .help").count() == 0, (lang, prompt)
+        spoken = await page.evaluate("window.__spoken")
+        assert any(item["text"] == prompt and item["lang"].lower().startswith("en") for item in spoken), (lang, prompt, spoken)
+        assert all(not item["lang"].lower().startswith(lang) for item in spoken), (lang, spoken)
+        print(f"CURRICULUM MISSING {lang.upper()} HELPER:", spoken)
+        await context.close()
 
 
 async def play(page, tag, maxsteps=120, capture_summary=True):
@@ -428,7 +545,8 @@ async def curriculum_flow_tests(browser, errors):
     await page.goto(BASE + "#/subject/math")
     assert await page.locator("#subject-class").input_value() == "3"
     assert await page.locator("#subject-class optgroup").get_attribute("label") == "Other classes"
-    await shot(page, "curriculum-subject-class.png")
+    assert await page.locator("[data-lid]").count() == 3
+    await shot(page, "anglo-class4-math-lessons.png")
     await page.locator("[data-lid='am4']").click()
     assert await play(page, "curriculum-am4", maxsteps=100, capture_summary=False)
     await page.goto(BASE + "#/home")
@@ -443,9 +561,12 @@ async def curriculum_flow_tests(browser, errors):
     await page.locator("[data-kid-system]").select_option("anglo")
     assert await page.locator("[data-kid-class] option").first.inner_text() == "Class 1"
     await page.locator("[data-kid-class]").select_option("3")
-    await page.goto(BASE + "#/preview/aso1")
+    await page.goto(BASE + "#/preview/aso5")
     await page.wait_for_selector("#act")
-    await shot(page, "curriculum-anglo-social-studies-lesson.png")
+    assert await page.locator("#cnt").count()
+    await page.locator("#cnt").click()
+    await page.wait_for_selector("#act .prompt")
+    await shot(page, "anglo-class5-social-studies-question.png")
     await context.close()
 
     franco_profile = {
@@ -470,6 +591,7 @@ async def curriculum_flow_tests(browser, errors):
 
     await page.goto(BASE + "#/subject/ang")
     await page.evaluate("window.__spoken = []")
+    await page.evaluate("Math.random = () => 0.999")
     await page.locator("[data-lid='fa4']").click()
     await page.wait_for_selector("#cnt")
     await page.locator("#cnt").click()
@@ -648,6 +770,21 @@ async def main():
         content_errors = await page.evaluate("""() => {
           const content = window.LEXORA_CONTENT, errors = [];
           const validTypes = new Set(['video', 'card', 'choice', 'truefalse', 'match', 'missing', 'build', 'order', 'dictation', 'story', 'number']);
+          const curriculumLessonIds = new Set(Object.values(content.curriculum.plan)
+            .flatMap(subjects => Object.values(subjects).flatMap(classes => classes.flat())));
+          const curriculumCells = {};
+          const unchangedIds = new Set(['k1', 'k2', 'k3', 'k4', 'k5', 'k6', 'm1', 'm2', 'm4', 'm5']);
+          const expandedAngloIds = new Set(Object.values(content.curriculum.plan.anglo)
+            .flat().flat().filter(lessonId => !unchangedIds.has(lessonId)));
+          const nonExpandedPrompts = new Set();
+          Object.entries(content.lessons).forEach(([lessonId, lesson]) => {
+            if (expandedAngloIds.has(lessonId)) return;
+            lesson.activities.slice(1).forEach(activity => {
+              if (activity.prompt) nonExpandedPrompts.add(activity.prompt.trim().toLocaleLowerCase());
+            });
+          });
+          const prompts = new Map();
+          let falseTruthCount = 0;
           Object.entries(content.lessons).forEach(([lessonId, lesson]) => {
             lesson.activities.forEach((activity, index) => {
               const where = `${lessonId} activity ${index + 1}`;
@@ -690,10 +827,21 @@ async def main():
               }
               cells.forEach((ids, classIndex) => {
                 if (!Array.isArray(ids) || ids.length === 0) errors.push(`${system.id}/${subject.id}/${classIndex}: empty lesson cell`);
+                if (system.id === 'anglo') {
+                  const unchangedFirstCells = classIndex === 0 && ['eng', 'math'].includes(subject.id);
+                  const expectedCount = unchangedFirstCells ? (subject.id === 'eng' ? 5 : 4) : 3;
+                  if ((ids || []).length !== expectedCount) {
+                    errors.push(`${system.id}/${subject.id}/${classIndex}: expected ${expectedCount} lessons, got ${(ids || []).length}`);
+                  }
+                  if (!(ids || []).some(lessonId => ['video', 'story'].includes(content.lessons[lessonId]?.activities?.[0]?.type))) {
+                    errors.push(`${system.id}/${subject.id}/${classIndex}: needs a video or story intro`);
+                  }
+                }
                 (ids || []).forEach(lessonId => {
                   if (!content.lessons[lessonId]) errors.push(`${system.id}/${subject.id}/${classIndex}: missing lesson ${lessonId}`);
                   else {
                     const lesson = content.lessons[lessonId];
+                    curriculumCells[lessonId] = { system: system.id, subject: subject.id, classIndex };
                     const expectedLang = system.id === 'anglo' && subject.id === 'fre' ? 'fr' :
                       system.id === 'franco' && subject.id !== 'ang' ? 'fr' : 'en';
                     const expectedPromptLang = system.id === 'anglo' && subject.id === 'fre' ? 'en' :
@@ -710,6 +858,74 @@ async def main():
               });
             });
           });
+          curriculumLessonIds.forEach(lessonId => {
+            const lesson = content.lessons[lessonId];
+            const cell = curriculumCells[lessonId];
+            if (!lesson || !cell) return;
+            if (!['card', 'video', 'story'].includes(lesson.activities[0]?.type)) {
+              errors.push(`${lessonId}: intro is not the first activity`);
+            }
+            if (cell.system !== 'anglo' || unchangedIds.has(lessonId)) return;
+            const intro = lesson.activities[0];
+            if (intro.type === 'card' && (intro.text || '').trim().length < 60) {
+              errors.push(`${lessonId}: card intro needs at least 60 characters`);
+            } else if (intro.type === 'story' && (intro.pages || []).length < 3) {
+              errors.push(`${lessonId}: story intro needs at least 3 pages`);
+            } else if (intro.type === 'video' && (intro.scenes || []).length < 3) {
+              errors.push(`${lessonId}: video intro needs at least 3 scenes`);
+            }
+            const scored = lesson.activities.filter(activity => !['card', 'video', 'story'].includes(activity.type));
+            const types = new Set(scored.map(activity => activity.type));
+            const choices = scored.filter(activity => activity.type === 'choice');
+            const truths = scored.filter(activity => activity.type === 'truefalse');
+            const matches = scored.filter(activity => activity.type === 'match');
+            const spelling = scored.filter(activity => ['build', 'dictation', 'missing'].includes(activity.type));
+            if (scored.length < 10 || scored.length > 12) errors.push(`${lessonId}: expected 10–12 scored questions, got ${scored.length}`);
+            if (types.size < 4) errors.push(`${lessonId}: expected at least 4 question types, got ${types.size}`);
+            if (choices.length < 4) errors.push(`${lessonId}: expected at least 4 choice questions, got ${choices.length}`);
+            if (choices.length > 5) errors.push(`${lessonId}: has more than 5 choice questions`);
+            if (truths.length < 2) errors.push(`${lessonId}: expected at least 2 true/false questions`);
+            if (!truths.some(activity => activity.answer === false)) errors.push(`${lessonId}: missing a false true/false claim`);
+            const maxSpelling = ['sci', 'soc'].includes(cell.subject) ? 2 : 3;
+            if (spelling.length > maxSpelling) errors.push(`${lessonId}: has more than ${maxSpelling} spelling questions`);
+            scored.forEach(activity => {
+              if (!activity.prompt) {
+                errors.push(`${lessonId}: ${activity.type} question has no prompt`);
+                return;
+              }
+              const prompt = activity.prompt.trim();
+              const key = prompt.toLocaleLowerCase();
+              if (/choose the correct match/i.test(prompt) || prompt.includes(' matches ') || /^calculate:/i.test(prompt)) {
+                errors.push(`${lessonId}: generic template prompt remains: ${prompt}`);
+              }
+              if (nonExpandedPrompts.has(key)) errors.push(`${lessonId}: prompt is reused from another lesson: ${prompt}`);
+              if (prompts.has(key)) errors.push(`${lessonId}: prompt is reused by ${prompts.get(key)}: ${prompt}`);
+              else prompts.set(key, lessonId);
+            });
+            truths.filter(activity => activity.answer === false).forEach(activity => {
+              falseTruthCount += 1;
+              if (!activity.explain || activity.explain.trim() === activity.prompt.trim() || /undefined/i.test(activity.explain)) {
+                errors.push(`${lessonId}: false statement has no correction`);
+              }
+            });
+            if (!matches.some(activity => activity.pairs?.length === 4 &&
+                new Set(activity.pairs.map(pair => pair[1])).size === 4)) {
+              errors.push(`${lessonId}: needs a four-pair match with unique right-hand sides`);
+            }
+            if (cell.subject === 'math' && cell.classIndex > 0 &&
+                scored.filter(activity => activity.type === 'number').length < 4) {
+              errors.push(`${lessonId}: maths lesson needs at least 4 number questions`);
+            }
+            if ((cell.subject === 'eng' && cell.classIndex > 0) || cell.subject === 'fre') {
+              if (!scored.some(activity => ['build', 'dictation', 'missing'].includes(activity.type))) {
+                errors.push(`${lessonId}: language lesson needs build, dictation, or missing`);
+              }
+              if (!scored.some(activity => activity.type === 'order')) {
+                errors.push(`${lessonId}: language lesson needs an order question`);
+              }
+            }
+          });
+          if (!falseTruthCount) errors.push('Anglophone curriculum needs at least one false true/false claim with a correction');
           Object.keys(content.lessons).forEach(lessonId => {
             if (references[lessonId] !== 1) errors.push(`${lessonId}: referenced by ${references[lessonId] || 0} units`);
           });
@@ -717,6 +933,25 @@ async def main():
         }""")
         print("CONTENT ERRORS:", content_errors)
         assert not content_errors, content_errors
+
+        lesson_counts = await page.evaluate("""() => {
+          const content = window.LEXORA_CONTENT;
+          const anglo = Object.values(content.curriculum.plan.anglo).flat().flat();
+          const all = Object.values(content.curriculum.plan).flatMap(subjects =>
+            Object.values(subjects).flatMap(classes => classes.flat()));
+          const unchanged = new Set(['k1', 'k2', 'k3', 'k4', 'k5', 'k6', 'm1', 'm2', 'm4', 'm5']);
+          const expanded = anglo.filter(id => !unchanged.has(id));
+          const scored = id => content.lessons[id].activities
+            .filter(activity => !['card', 'video', 'story'].includes(activity.type)).length;
+          return {
+            curriculumLessons: all.length,
+            angloLessons: anglo.length,
+            francoLessons: all.length - anglo.length,
+            expandedAngloLessons: expanded.length,
+            expandedAngloQuestions: expanded.reduce((total, id) => total + scored(id), 0)
+          };
+        }""")
+        print("CURRICULUM LESSON COUNTS:", lesson_counts)
 
         coverage = await page.evaluate("""() => {
           const content = window.LEXORA_CONTENT, i18n = window.LEXORA_I18N;
@@ -728,42 +963,64 @@ async def main():
           const missingStrings = Object.entries(i18n.strings)
             .filter(([, values]) => codes.some(code => !values[code]))
             .map(([key]) => key);
-          const required = new Set();
+          const required = new Map();
           const missingGloss = [];
-          const addEnglish = (text, language) => {
-            if (typeof text === 'string' && /\p{L}/u.test(text) && language === 'en') required.add(text);
+          const curriculumFr = window.LEXORA_CURRICULUM_FR || {};
+          const curriculumRequired = new Set();
+          const addEnglish = (text, language, curriculum) => {
+            if (typeof text !== 'string' || !/\p{L}/u.test(text) || language !== 'en') return;
+            if (curriculum) curriculumRequired.add(text);
+            const locales = curriculum ? ['fr'] : ['fr', 'es', 'pt', 'ar'];
+            const requiredLocales = required.get(text) || new Set();
+            locales.forEach(code => requiredLocales.add(code));
+            required.set(text, requiredLocales);
+          };
+          const addGlossRequirement = (word, curriculum) => {
+            const locales = curriculum ? ['fr'] : ['fr', 'es', 'pt', 'ar'];
+            if (!i18n.gloss[word] || locales.some(code => !i18n.gloss[word][code])) missingGloss.push(word);
           };
           content.sections.forEach(section => {
-            required.add(section.title); required.add(section.desc);
-            section.units.forEach(unit => required.add(unit.title));
+            [section.title, section.desc, ...section.units.map(unit => unit.title)].forEach(text => {
+              const requiredLocales = required.get(text) || new Set();
+              ['fr', 'es', 'pt', 'ar'].forEach(code => requiredLocales.add(code));
+              required.set(text, requiredLocales);
+            });
           });
           Object.entries(content.lessons).forEach(([lessonId, lesson]) => {
             const targetLang = lesson.lang || 'en';
             const promptLang = lesson.promptLang || targetLang;
-            addEnglish(lesson.title, targetLang);
+            const curriculum = curriculumLessonIds.has(lessonId);
+            addEnglish(lesson.title, targetLang, curriculum);
             lesson.activities.forEach(activity => {
-              addEnglish(activity.prompt, promptLang);
-              addEnglish(activity.explain, promptLang);
-              addEnglish(activity.title, targetLang);
+              addEnglish(activity.prompt, promptLang, curriculum);
+              addEnglish(activity.explain, promptLang, curriculum);
+              addEnglish(activity.title, targetLang, curriculum);
               if (coveredContentIds.has(lessonId)) {
-                addEnglish(activity.text, targetLang);
-                (activity.lines || []).forEach(line => addEnglish(line, targetLang));
+                addEnglish(activity.text, targetLang, curriculum);
+                (activity.lines || []).forEach(line => addEnglish(line, targetLang, curriculum));
               }
-              (activity.pages || []).forEach(page => addEnglish(page.text, targetLang));
-              (activity.scenes || []).forEach(scene => addEnglish(scene.caption, targetLang));
+              (activity.pages || []).forEach(page => addEnglish(page.text, targetLang, curriculum));
+              (activity.scenes || []).forEach(scene => addEnglish(scene.caption, targetLang, curriculum));
             });
             if (targetLang === 'en') (lesson.words || []).forEach(word => {
-              if (!i18n.gloss[word]) missingGloss.push(word);
+              addGlossRequirement(word, curriculum);
             });
             if (targetLang === 'en' && coveredContentIds.has(lessonId)) {
               lesson.activities.filter(activity => activity.type === 'card' && /^[\\p{L}\\p{N}]+$/u.test(activity.text || ''))
-                .forEach(activity => { if (!i18n.gloss[activity.text]) missingGloss.push(activity.text); });
+                .forEach(activity => addGlossRequirement(activity.text, curriculum));
             }
           });
-          content.placement.forEach(question => addEnglish(question.prompt, 'en'));
-          const missingTranslations = [...required].filter(text =>
-            !i18n.tr[text] || ['fr', 'es', 'pt', 'ar'].some(code => !i18n.tr[text][code])
-          );
+          content.placement.forEach(question => addEnglish(question.prompt, 'en', false));
+          const isProperNounOrNumber = text =>
+            /^(?:\d[\d.,\s%:/-]*|[\p{Lu}][\p{L}\p{M}'’.-]*(?:\s+[\p{Lu}][\p{L}\p{M}'’.-]*)*)$/u.test(text.trim());
+          const missingTranslations = [...required].filter(([text, locales]) => {
+            if (!i18n.tr[text] || [...locales].some(code => !i18n.tr[text][code])) return true;
+            if (!curriculumRequired.has(text)) return false;
+            const hasLiteralTranslation = Object.prototype.hasOwnProperty.call(curriculumFr, text);
+            const french = curriculumFr[text];
+            return !hasLiteralTranslation || i18n.tr[text].fr !== french ||
+              (!isProperNounOrNumber(text) && french.trim().toLowerCase() === text.trim().toLowerCase());
+          }).map(([text]) => text);
           return { missingStrings, missingTranslations, missingGloss: [...new Set(missingGloss)] };
         }""")
         print("MISSING STRINGS:", coverage["missingStrings"])
@@ -773,6 +1030,9 @@ async def main():
         assert not coverage["missingTranslations"], coverage["missingTranslations"]
         assert not coverage["missingGloss"], coverage["missingGloss"]
         await mocked_voice_tests(browser, errors)
+        await curriculum_replay_tests(browser, errors)
+        await math_word_problem_screenshot(browser, errors)
+        await missing_curriculum_locale_tests(browser, errors)
         await curriculum_flow_tests(browser, errors)
         print("SCREENSHOTS:", SHOTS)
         print("ERRORS:", errors)

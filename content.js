@@ -23,11 +23,11 @@ window.LEXORA_CONTENT = {
     },
     plan: {
       anglo: {
-        eng: [["k1", "k2", "k3", "k4", "k5"], ["ae2"], ["ae3"], ["ae4"], ["ae5"], ["ae6"]],
-        math: [["m1", "m2", "m4", "m5"], ["am2"], ["am3"], ["am4"], ["am5"], ["am6"]],
-        sci: [["k6"], ["as2"], ["as3"], ["as4"], ["as5"], ["as6"]],
-        soc: [["aso1"], ["aso2"], ["aso3"], ["aso4"], ["aso5"], ["aso6"]],
-        fre: [["af1"], ["af2"], ["af3"], ["af4"], ["af5"], ["af6"]]
+        eng: [["k1", "k2", "k3", "k4", "k5"], ["ae2", "ae2b", "ae2c"], ["ae3", "ae3b", "ae3c"], ["ae4", "ae4b", "ae4c"], ["ae5", "ae5b", "ae5c"], ["ae6", "ae6b", "ae6c"]],
+        math: [["m1", "m2", "m4", "m5"], ["am2", "am2b", "am2c"], ["am3", "am3b", "am3c"], ["am4", "am4b", "am4c"], ["am5", "am5b", "am5c"], ["am6", "am6b", "am6c"]],
+        sci: [["k6", "as1b", "as1c"], ["as2", "as2b", "as2c"], ["as3", "as3b", "as3c"], ["as4", "as4b", "as4c"], ["as5", "as5b", "as5c"], ["as6", "as6b", "as6c"]],
+        soc: [["aso1", "aso1b", "aso1c"], ["aso2", "aso2b", "aso2c"], ["aso3", "aso3b", "aso3c"], ["aso4", "aso4b", "aso4c"], ["aso5", "aso5b", "aso5c"], ["aso6", "aso6b", "aso6c"]],
+        fre: [["af1", "af1b", "af1c"], ["af2", "af2b", "af2c"], ["af3", "af3b", "af3c"], ["af4", "af4b", "af4c"], ["af5", "af5b", "af5c"], ["af6", "af6b", "af6c"]]
       },
       franco: {
         fra: [["ff1"], ["ff2"], ["ff3"], ["ff4"], ["ff5"], ["ff6"]],
@@ -515,4 +515,76 @@ window.LEXORA_CONTENT = {
     };
   };
   specs.forEach((spec) => { C.lessons[spec.id] = makeLesson(spec); });
+  const tuplePrompts = {
+    en: {
+      match: "Match each word with its meaning.",
+      build: "Build the word.",
+      dict: "Listen and spell the word.",
+      missing: "Which letter is missing?",
+      order: "Put the words in order."
+    },
+    fr: {
+      match: "Associe chaque paire.",
+      build: "Construis le mot.",
+      dict: "Écoute et écris le mot.",
+      missing: "Complète le mot.",
+      order: "Mets les mots dans l'ordre."
+    }
+  };
+  const makeExplicitLesson = (spec) => {
+    const defaults = tuplePrompts[spec.promptLang === "fr" ? "fr" : "en"];
+    let intro;
+    if (spec.intro.card) {
+      const [title, text] = spec.intro.card;
+      intro = { type: "card", title, text, say: text };
+    } else if (spec.intro.video) {
+      intro = {
+        type: "video",
+        title: spec.title,
+        scenes: spec.intro.video.map(([art, caption], i) => ({
+          bg: ["#DBEAFE", "#FEF3C7", "#D1FAE5"][i % 3],
+          art,
+          anim: ["float", "pop", "bounce"][i % 3],
+          caption
+        }))
+      };
+    } else {
+      intro = {
+        type: "story",
+        title: spec.title,
+        pages: spec.intro.story.map((text, i) => ({
+          emoji: ["📖", "🏫", "😊"][i % 3],
+          text
+        }))
+      };
+    }
+    const activities = spec.qs.map((question) => {
+      const [type, prompt, value, answerOrIndex, unit] = question;
+      if (type === "choice") {
+        return { type, prompt, options: value.map((text) => ({ t: String(text) })), answer: answerOrIndex };
+      }
+      if (type === "tf") return { type: "truefalse", prompt, answer: value, explain: answerOrIndex };
+      if (type === "num") return { type: "number", prompt, answer: value, unit: answerOrIndex };
+      if (type === "match") return { type, prompt: value || defaults.match, pairs: prompt };
+      if (type === "build") return { type, prompt: value || defaults.build, word: prompt, say: prompt };
+      if (type === "dict") return { type: "dictation", prompt: value || defaults.dict, say: prompt, answer: prompt, word: true };
+      if (type === "missing") {
+        const [word, hide, choices, emoji, customPrompt] = question.slice(1);
+        return { type, prompt: customPrompt || defaults.missing, word, hide, choices, emoji, say: word };
+      }
+      if (type === "order") return { type, prompt: value || defaults.order, words: prompt };
+      throw new Error(`Unknown curriculum question type: ${type}`);
+    });
+    return {
+      title: spec.title,
+      emoji: spec.emoji,
+      skill: spec.skill,
+      words: spec.words,
+      lang: spec.lang,
+      promptLang: spec.promptLang,
+      activities: [intro, ...activities]
+    };
+  };
+  window.LEXORA_MAKE_EXPLICIT_LESSON = makeExplicitLesson;
+
 })();

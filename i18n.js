@@ -686,5 +686,50 @@
     glossMap[word] = { fr: values[0], es: values[1], pt: values[2], ar: values[3] };
     glossMap[word.toLowerCase()] = glossMap[word];
   });
+  const curriculumGlossFr = {
+    addition: "addition", adjective: "adjectif", adult: "adulte", "African Union": "Union africaine",
+    and: "et", angle: "angle", animal: "animal", area: "aire", average: "moyenne", balanced: "équilibré",
+    "bar graph": "diagramme à barres", basket: "panier", battery: "pile", because: "parce que", beside: "à côté de",
+    between: "entre", blue: "bleu", book: "livre", books: "livres", boxes: "boîtes", bright: "éclatant", Buea: "Buea",
+    bulb: "ampoule", buses: "bus", but: "mais", calendar: "calendrier", capital: "capitale", cat: "chat",
+    celebrate: "célébrer", centimetre: "centimètre", "Central Africa": "Afrique centrale", circuit: "circuit",
+    citizen: "citoyen", class: "classe", closing: "formule de fin", cloud: "nuage", cocoa: "cacao", coffee: "café",
+    coins: "pièces", community: "communauté", cotton: "coton", council: "conseil", crossing: "passage piéton",
+    culture: "culture", day: "jour", decimal: "nombre décimal", digest: "digérer", direction: "direction",
+    divide: "diviser", domestic: "domestique", eat: "manger", egg: "œuf", empty: "vide", energy: "énergie",
+    environment: "environnement", equal: "égal", estimate: "estimation", evidence: "preuve", executive: "exécutif",
+    explain: "expliquer", family: "famille", farmer: "agriculteur", father: "père", festival: "festival",
+    flag: "drapeau", food: "nourriture", fraction: "fraction", future: "futur", go: "aller", goodbye: "au revoir",
+    gram: "gramme", grammar: "grammaire", greeting: "salutation", groups: "groupes", grow: "grandir", habitat: "habitat",
+    half: "moitié", "half past": "et demie", he: "il", hello: "bonjour", history: "histoire", hygiene: "hygiène",
+    independence: "indépendance", it: "cela", journey: "trajet", judiciary: "pouvoir judiciaire", kilogram: "kilogramme",
+    language: "langue", leaf: "feuille", legislature: "pouvoir législatif", length: "longueur", lesson: "leçon",
+    lever: "levier", "life cycle": "cycle de vie", liquid: "liquide", litre: "litre", litter: "déchets", living: "vivant",
+    local: "local", lungs: "poumons", mango: "mangue", map: "carte", market: "marché", mayor: "maire", measure: "mesurer",
+    message: "message", metre: "mètre", "minute hand": "grande aiguille", month: "mois", mosquito: "moustique",
+    mother: "mère", motto: "devise", "Mount Cameroon": "mont Cameroun", multiply: "multiplier", near: "proche",
+    "nearest hundred": "centaine la plus proche", "nearest ten": "dizaine la plus proche", needs: "besoins",
+    neighbour: "voisin", net: "moustiquaire", night: "nuit", "non-living": "non vivant", north: "nord", notes: "billets",
+    noun: "nom", nurse: "infirmier ou infirmière", "o'clock": "heure pile", observe: "observer", one: "un", ones: "unités",
+    opposite: "contraire", orbit: "orbite", past: "passé", pen: "stylo", pencil: "crayon", percent: "pour cent",
+    perimeter: "périmètre", pig: "cochon", "place value": "valeur de position", planet: "planète", plant: "plante",
+    play: "jouer", played: "joué", please: "s'il te plaît", present: "présent", problem: "problème", quotient: "quotient",
+    rain: "pluie", reading: "lecture", red: "rouge", region: "région", respect: "respect", responsibility: "responsabilité",
+    reunification: "réunification", reuse: "réutiliser", "right angle": "angle droit", rock: "roche", root: "racine",
+    round: "arrondir", rows: "rangées", rule: "règle", safe: "sûr", Sanaga: "Sanaga", school: "école", senses: "sens",
+    sentence: "phrase", she: "elle", shelter: "abri", sister: "sœur", small: "petit", soap: "savon", soil: "sol",
+    "solar system": "système solaire", solid: "solide", stagnant: "stagnant", stomach: "estomac", subtraction: "soustraction",
+    sum: "somme", Sun: "Soleil", taller: "plus grand", tallest: "le plus grand", taste: "goût", teacher: "enseignant",
+    tens: "dizaines", three: "trois", toothbrush: "brosse à dents", total: "total", town: "ville", tradition: "tradition",
+    traffic: "circulation", transport: "transport", triangle: "triangle", two: "deux", under: "sous", "United Nations": "Nations unies",
+    verb: "verbe", village: "village", visited: "a rendu visite", walked: "a marché", "water vapour": "vapeur d'eau",
+    weather: "temps", week: "semaine", wheel: "roue", wild: "sauvage", XAF: "XAF", Yaoundé: "Yaoundé", yellow: "jaune"
+  };
+  Object.entries(curriculumGlossFr).forEach(([word, french]) => {
+    const key = word.toLowerCase();
+    const entry = { ...(glossMap[key] || {}), fr: french };
+    glossMap[word] = entry;
+    glossMap[key] = entry;
+  });
   window.LEXORA_I18N = { langs, strings, tr, gloss: glossMap };
 })();

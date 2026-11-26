@@ -530,6 +530,20 @@
         activities: pr.review.map((w) => ({ type: "dictation", prompt: "Spell the word you hear.", say: w, answer: w, word: true })) };
     } else L = C.lessons[lid];
     if (!L) return go("#/home");
+    if (curriculumEntry(lid)) {
+      const activities = L.activities.map((activity) => {
+        if (activity.type !== "choice") return activity;
+        const order = shuffle(activity.options.map((_, index) => index));
+        return {
+          ...activity,
+          options: order.map((index) => activity.options[index]),
+          answer: order.indexOf(activity.answer)
+        };
+      });
+      const questions = activities.slice(1);
+      const order = shuffle(questions.map((_, index) => index));
+      L = { ...L, activities: [activities[0], ...order.map((index) => questions[index])] };
+    }
     const p = preview ? null : active();
     if (!preview && lid !== "review" && !unlocked(lid, prog(p.id))) return go("#/home");
     const lessonUnit = unitOf(lid);
